@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "398609081798",
+    "project_id": "funbreak-vale",
+    "storage_bucket": "funbreak-vale.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:398609081798:android:3095f62d6c1041b8e8bec7",
+        "android_client_info": {
+          "package_name": "com.funbreak.vale.customer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCvbtC8mDJuZROeHqnYt2DueDZCmKspQn0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:398609081798:android:23008dc64509b270e8bec7",
+        "android_client_info": {
+          "package_name": "com.funbreak.vale.driver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCvbtC8mDJuZROeHqnYt2DueDZCmKspQn0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
