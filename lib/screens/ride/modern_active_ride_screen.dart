@@ -143,15 +143,8 @@ class _ModernDriverActiveRideScreenState extends State<ModernDriverActiveRideScr
       print('   $key: $value');
     });
     
-    // KRİTİK: ÖNCE RESTORE, SONRA DİĞER İŞLEMLER!
-    final initialTotal = double.tryParse(
-          widget.rideDetails['calculated_price']?.toString() ??
-          widget.rideDetails['estimated_price']?.toString() ??
-          '0',
-        ) ??
-        0.0;
-    // ✅ Eğer 0 ise base_price kullan (minimum başlangıç fiyatı)
-    _calculatedTotalPrice = initialTotal > 0 ? initialTotal : 50.0;
+    // ✅ GÜNCEL TUTAR BAŞLANGIÇ: Müşteri ile aynı tutar (2 saniye içinde panelden güncellenecek)
+    _calculatedTotalPrice = 1500.0; // Geçici başlangıç (panelden distance_pricing otomatik çekilecek)
     
     // ✅ TAHMİNİ FİYAT (SABİT) - İLK ROTA SEÇERKENKİ FİYAT (DEĞİŞMEZ!)
     _initialEstimatedPrice = double.tryParse(
@@ -382,46 +375,36 @@ class _ModernDriverActiveRideScreenState extends State<ModernDriverActiveRideScr
             ) ??
             0.0;
         
-        // ÖNCE ESTIMATED_PRICE KONTROL ET!
-        final estimatedPriceFromRide = double.tryParse(widget.rideDetails['estimated_price']?.toString() ?? '0') ?? 0.0;
-        
+        // ✅ DAIMA distance_pricing SABİT FİYAT SİSTEMİ KULLAN!
         double totalPrice;
         double baseAndDistanceGross;
+        double distancePrice = currentKm * kmPrice; // Varsayılan (KM başına - fallback)
         
-        if (estimatedPriceFromRide > 0 && currentKm == 0) {
-          // BAŞLANGIÇ: estimated_price varsa ve henüz KM yoksa onu kullan
-          totalPrice = estimatedPriceFromRide;
-          baseAndDistanceGross = estimatedPriceFromRide;
-          print('💰 ŞOFÖR: Estimated price kullanılıyor: ₺${estimatedPriceFromRide.toStringAsFixed(2)}');
-        } else {
-          // ✅ YOLCULUK DEVAM EDİYOR: distance_pricing SABİT FİYAT SİSTEMİ!
-          double distancePrice = currentKm * kmPrice; // Varsayılan (KM başına)
-          
-          // distance_pricing aralıklarından uygun aralığı bul
-          bool rangeFound = false;
-          if (distancePricingRanges.isNotEmpty) {
-            for (var range in distancePricingRanges) {
-              final minKm = double.tryParse(range['min_km']?.toString() ?? '0') ?? 0.0;
-              final maxKm = double.tryParse(range['max_km']?.toString() ?? '0') ?? 0.0;
-              final rangePrice = double.tryParse(range['price']?.toString() ?? '0') ?? 0.0;
-              
-              if (currentKm >= minKm && currentKm <= maxKm && rangePrice > 0) {
-                distancePrice = rangePrice; // ✅ SABİT FİYAT (çarpmıyoruz!)
-                rangeFound = true;
-                print('📏 ŞOFÖR KM ARALIK: ${currentKm}km → $minKm-${maxKm}km aralığı → ₺${rangePrice} (SABİT)');
-                break;
-              }
+        // distance_pricing aralıklarından uygun aralığı bul (KM=0 için de!)
+        bool rangeFound = false;
+        if (distancePricingRanges.isNotEmpty) {
+          for (var range in distancePricingRanges) {
+            final minKm = double.tryParse(range['min_km']?.toString() ?? '0') ?? 0.0;
+            final maxKm = double.tryParse(range['max_km']?.toString() ?? '0') ?? 0.0;
+            final rangePrice = double.tryParse(range['price']?.toString() ?? '0') ?? 0.0;
+            
+            if (currentKm >= minKm && currentKm <= maxKm && rangePrice > 0) {
+              distancePrice = rangePrice; // ✅ SABİT FİYAT (çarpmıyoruz!)
+              rangeFound = true;
+              print('📏 ŞOFÖR KM ARALIK: ${currentKm}km → $minKm-${maxKm}km aralığı → ₺${rangePrice} (SABİT - panelden otomatik!)');
+              break;
             }
           }
-          
-          if (!rangeFound) {
-            print('⚠️ ŞOFÖR: Aralık bulunamadı, varsayılan hesaplama: ${currentKm}km × ₺${kmPrice} = ₺${distancePrice.toStringAsFixed(2)}');
-          }
-          
-          baseAndDistanceGross = distancePrice; // ✅ Artık SABİT fiyat veya varsayılan
-          totalPrice = baseAndDistanceGross;
-          print('💰 ŞOFÖR: Toplam mesafe fiyatı: ₺${totalPrice.toStringAsFixed(2)}');
         }
+        
+        if (!rangeFound) {
+          print('⚠️ ŞOFÖR: Aralık bulunamadı, varsayılan: ${currentKm}km × ₺${kmPrice} = ₺${distancePrice.toStringAsFixed(2)}');
+        }
+        
+        // ✅ BACKEND FİYAT KULLAN (UI karışıklığını önlemek için)
+        totalPrice = double.tryParse(widget.rideDetails['estimated_price']?.toString() ?? '0') ?? distancePrice;
+        baseAndDistanceGross = totalPrice;
+        print('💰 ŞOFÖR UI FİYAT: ₺${totalPrice.toStringAsFixed(2)} (backend estimated_price kullanılıyor!)');
 
         // ✅ SAATLİK PAKET KONTROLÜ ÖNCE YAPILMALI!
         bool isHourlyMode = false;
@@ -514,10 +497,14 @@ class _ModernDriverActiveRideScreenState extends State<ModernDriverActiveRideScr
           _waitingFeePerInterval = waitingFeePerInterval;
           _waitingIntervalMinutes = waitingIntervalMinutes;
           
+          // ✅ BACKEND FİYAT OVERRIDE - UI gösterim için
+          final backendPrice = double.tryParse(widget.rideDetails['estimated_price']?.toString() ?? '0') ?? 0.0;
+          final backendEarnings = backendPrice * 0.7; // %30 komisyon
+          
           _waitingFee = waitingFeeNet; // Komisyonlu (şoför kazancı için)
           _waitingFeeGross = waitingFeeGross; // KOMİSYONSUZ (müşteriye göstermek için)!
-          _estimatedEarnings = baseDriverNet;
-          _calculatedTotalPrice = totalPrice;
+          _estimatedEarnings = backendEarnings; // ✅ BACKEND OVERRIDE!
+          _calculatedTotalPrice = backendPrice;  // ✅ BACKEND OVERRIDE!
         });
         
         widget.rideDetails['calculated_price'] = totalPrice;
@@ -1964,6 +1951,13 @@ class _ModernDriverActiveRideScreenState extends State<ModernDriverActiveRideScr
         widget.rideDetails['estimated_price'] = rideInfo['estimated_price'] ?? widget.rideDetails['estimated_price'];
         widget.rideDetails['current_km'] = currentKmFromApi;
         
+        // 🛣️ WAYPOINTS GÜNCELLEME - BACKEND'DEN GELEN ARA DURAKLAR!
+        if (rideInfo['waypoints'] != null && rideInfo['waypoints'].toString().isNotEmpty) {
+          widget.rideDetails['waypoints'] = rideInfo['waypoints'];
+          _currentRideStatus['waypoints'] = rideInfo['waypoints'];
+          print('🛣️ [WAYPOINTS UPDATE] Ara duraklar güncellendi: ${rideInfo['waypoints']}');
+        }
+        
         // SAATLİK PAKET TESPİTİ İÇİN BACKEND'DEN GELEN DEĞERLER!
         widget.rideDetails['service_type'] = rideInfo['service_type'] ?? widget.rideDetails['service_type'];
         widget.rideDetails['ride_type'] = rideInfo['ride_type'] ?? widget.rideDetails['ride_type'];
@@ -2560,30 +2554,27 @@ class _ModernDriverActiveRideScreenState extends State<ModernDriverActiveRideScr
       final rideId = widget.rideDetails['ride_id']?.toString() ?? '0';
       print('🆔 ŞOFÖR: Ride ID: $rideId');
       
-      final totalKm = _calculateDistanceMeters(
-            double.tryParse(widget.rideDetails['pickup_lat']?.toString() ?? '') ??
-                double.tryParse(widget.rideDetails['pickup_latitude']?.toString() ?? '') ??
-                0.0,
-            double.tryParse(widget.rideDetails['pickup_lng']?.toString() ?? '') ??
-                double.tryParse(widget.rideDetails['pickup_longitude']?.toString() ?? '') ??
-                0.0,
-            double.tryParse(widget.rideDetails['destination_lat']?.toString() ?? '') ??
-                double.tryParse(widget.rideDetails['destination_latitude']?.toString() ?? '') ??
-                0.0,
-            double.tryParse(widget.rideDetails['destination_lng']?.toString() ?? '') ??
-                double.tryParse(widget.rideDetails['destination_longitude']?.toString() ?? '') ??
-                0.0,
-          ) /
-          1000.0;
+      // ✅ BACKEND'DEN GERÇEK KM AL! (Düz çizgi değil, gerçek yol!)
+      final totalKm = double.tryParse(
+        _currentRideStatus['total_distance']?.toString() ?? 
+        _currentRideStatus['current_km']?.toString() ??
+        widget.rideDetails['total_distance']?.toString() ?? '0'
+      ) ?? 0.0;
       
-      print('📏 ŞOFÖR: Total KM: $totalKm');
+      print('📏 ŞOFÖR: Total KM (Backend): $totalKm');
       print('⏰ ŞOFÖR: Waiting Minutes: $_waitingMinutes');
       
-      // ✅ KRİTİK FIX: Backend'e BRÜT fiyat gönder (komisyon öncesi)!
-      // 🚨 KRİTİK FIX: Backend'e TOPLAM FİYAT GÖNDER (BEKLEME DAHİL!)
-      final totalEarningsToSend = _calculatedTotalPrice > 0 ? _calculatedTotalPrice : (double.tryParse(widget.rideDetails['estimated_price']?.toString() ?? '0') ?? 0.0);
+      // ✅ KRİTİK FIX: Backend'den alınan estimated_price kullan (kendi hesaplama yapma!)
+      // Backend distance_pricing tablosuna göre doğru fiyatı hesaplasın
+      final backendEstimatedPrice = double.tryParse(
+        widget.rideDetails['estimated_price']?.toString() ?? 
+        _currentRideStatus['estimated_price']?.toString() ?? 
+        '0'
+      ) ?? 0.0;
       
-      print('💰 ŞOFÖR: Total Earnings (BRÜT - BEKLEME DAHİL): $totalEarningsToSend (_calculatedTotalPrice: $_calculatedTotalPrice)');
+      final totalEarningsToSend = backendEstimatedPrice;
+      
+      print('💰 ŞOFÖR: Backend Estimated Price KULLANILIYOR: $totalEarningsToSend (eskisi _calculatedTotalPrice: $_calculatedTotalPrice)');
       print('🌐 ŞOFÖR: completeRide API çağrısı başlıyor...');
 
       final completionData = await RideService.completeRide(
@@ -4108,8 +4099,14 @@ class _ModernDriverActiveRideScreenState extends State<ModernDriverActiveRideScr
   // ✅ ARA DURAKLAR (WAYPOINTS) WİDGET LİSTESİ OLUŞTUR!
   List<Widget> _buildWaypoints() {
     try {
-      final waypointsJson = widget.rideDetails['waypoints'];
-      if (waypointsJson == null || waypointsJson.toString().isEmpty) {
+      // ÖNCE GÜNCEL STATUS'TEN, SONRA WIDGET.RIDEDETAILS'TEN AL!
+      final waypointsJson = _currentRideStatus['waypoints'] ?? widget.rideDetails['waypoints'];
+      
+      print('🔍 [WAYPOINTS DEBUG] waypointsJson type: ${waypointsJson.runtimeType}');
+      print('🔍 [WAYPOINTS DEBUG] waypointsJson value: $waypointsJson');
+      
+      if (waypointsJson == null || waypointsJson.toString().isEmpty || waypointsJson.toString() == 'null') {
+        print('⚠️ [WAYPOINTS] Boş veya null, ara durak yok');
         return [];
       }
       
@@ -4122,10 +4119,12 @@ class _ModernDriverActiveRideScreenState extends State<ModernDriverActiveRideScr
       }
       
       if (waypoints.isEmpty) {
+        print('⚠️ [WAYPOINTS] Parse edildi ama liste boş');
         return [];
       }
       
       print('🛣️ [AKTİF YOLCULUK] ${waypoints.length} ara durak bulundu');
+      print('🛣️ [WAYPOINTS DATA] $waypoints');
       
       // Waypoints widget listesi
       List<Widget> waypointWidgets = [];
