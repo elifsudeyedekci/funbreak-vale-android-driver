@@ -36,6 +36,7 @@ import 'screens/auth/auth_wrapper.dart'; // AUTH WRAPPER!
 import 'screens/main/persistence_aware_driver_main.dart'; // PERSİSTENCE AWARE ANA SAYFA!
 import 'screens/main/main_screen.dart'; // NORMAL ANA SAYFA!
 import 'services/ride_persistence_service.dart'; // PERSİSTENCE SERVİS!
+import 'services/background_location_service.dart'; // 🚗 ARKA PLAN KONUM SERVİSİ!
 import 'package:shared_preferences_android/shared_preferences_android.dart';
 import 'package:shared_preferences_foundation/shared_preferences_foundation.dart';
 
@@ -218,6 +219,16 @@ void main() async {
   
   // Session servisini başlat
   await SessionService.initializeSession();
+  
+  // 🚗 ARKA PLAN KONUM SERVİSİ BAŞLAT (UYGULAMA KAPALIYKEN DE KM HESABI!)
+  try {
+    await BackgroundLocationService.initialize();
+    // Aktif yolculuk varsa servisi yeniden başlat
+    await BackgroundLocationService.resumeIfActiveRide();
+    print('✅ [ŞOFÖR] Background location service hazır');
+  } catch (e) {
+    print('⚠️ [ŞOFÖR] Background location service hatası: $e');
+  }
   
   runApp(const MyApp());
 }

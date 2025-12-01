@@ -280,10 +280,28 @@ class AdvancedNotificationService {
       print('   ✅ Notification eklendi: $title');
     }
     
-    await _persistPendingRideRequest(finalMessage);
-
-    final notificationType = finalMessage.data['notification_type']?.toString() ?? '';
+    // ⚠️ AKTİF YOLCULUK KONTROLÜ - İŞTE OLAN SÜRÜCÜYE YENİ TALEP GÖSTERİLMEZ!
     final type = finalMessage.data['type']?.toString() ?? '';
+    final notificationType = finalMessage.data['notification_type']?.toString() ?? '';
+    
+    if (type == 'new_ride_request' || type == 'manual_assignment') {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final activeRideJson = prefs.getString('active_driver_ride_data');
+        
+        if (activeRideJson != null && activeRideJson.isNotEmpty) {
+          print('⚠️ [SÜRÜCÜ FOREGROUND] AKTİF YOLCULUK VAR - YENİ TALEP GÖSTERILMEYECEK!');
+          print('   ❌ Yeni talep atlandı - sürücü zaten işte');
+          return; // Bildirim gösterme ve persist etme!
+        }
+        
+        print('✅ [SÜRÜCÜ FOREGROUND] Aktif yolculuk yok - yeni talep gösterilebilir');
+      } catch (e) {
+        print('⚠️ Aktif yolculuk kontrolü hatası: $e');
+      }
+    }
+
+    await _persistPendingRideRequest(finalMessage);
     
     if (notificationType == 'requests_expired') {
       await RidePersistenceService.clearPendingRideRequest();
@@ -526,20 +544,38 @@ class AdvancedNotificationService {
   static Future<void> _updateDriverTokenOnServer(String token) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final userId = prefs.getString('user_id') ?? '0';
+      
+      // 🔍 driver_id VEYA admin_user_id VEYA user_id - hepsini dene!
+      String driverId = prefs.getString('driver_id') ?? 
+                        prefs.getString('admin_user_id') ?? 
+                        prefs.getString('user_id') ?? '0';
+      
+      if (driverId == '0' || driverId == 'test_driver_001') {
+        print('⚠️ Sürücü FCM Token kaydetme atlandı - sürücü ID bulunamadı veya test hesabı');
+        return;
+      }
+      
+      print('📤 Sürücü FCM Token backend\'e gönderiliyor... (driverId: $driverId)');
       
       final response = await http.post(
         Uri.parse('$baseUrl/update_fcm_token.php'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'user_id': userId,
+          'user_id': driverId,
           'user_type': 'driver',
           'fcm_token': token,
         }),
       );
       
       if (response.statusCode == 200) {
-        print('✅ Sürücü FCM Token güncellendi');
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          print('✅ Sürücü FCM Token sunucuya kaydedildi! (driverId: $driverId)');
+        } else {
+          print('⚠️ Sürücü FCM Token kayıt yanıtı: ${data['message'] ?? 'bilinmiyor'}');
+        }
+      } else {
+        print('❌ Sürücü FCM Token kayıt HTTP hatası: ${response.statusCode}');
       }
     } catch (e) {
       print('❌ Sürücü token güncelleme hatası: $e');

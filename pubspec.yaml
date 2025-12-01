@@ -27,7 +27,8 @@ dependencies:
   flutter_sound: ^9.2.13
   path_provider: ^2.1.1
   url_launcher: ^6.3.2
-  device_info_plus: ^9.1.0
+  flutter_background_service: ^5.0.5
+  flutter_background_service_android: ^6.2.2
 
 dev_dependencies:
   flutter_test:

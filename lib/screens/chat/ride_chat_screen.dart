@@ -64,7 +64,7 @@ class _RideChatScreenState extends State<RideChatScreen> {
     await _audioRecorder!.openRecorder();
     await _audioPlayer!.openPlayer();
     
-    print('🎤 ŞOFÖR Ses kayıt sistemi başlatıldı');
+    // Ses kayıt sistemi başlatıldı
   }
 
   Future<void> _loadCachedMessages() async {
@@ -123,29 +123,80 @@ class _RideChatScreenState extends State<RideChatScreen> {
 
           final merged = <Map<String, dynamic>>[];
           for (final apiMessage in apiMessages) {
+            final messageType = apiMessage['message_type'] ?? 'text';
+            final messageContent = apiMessage['message_content'] ?? apiMessage['file_path'] ?? '';
+            
+            // Konum mesajı için lat/lng parse et
+            double? lat;
+            double? lng;
+            String? locationName;
+            
+            if (messageType == 'location') {
+              try {
+                // JSON formatında mı kontrol et
+                if (messageContent.toString().startsWith('{')) {
+                  final locationData = jsonDecode(messageContent);
+                  lat = (locationData['latitude'] as num?)?.toDouble();
+                  lng = (locationData['longitude'] as num?)?.toDouble();
+                  locationName = locationData['name']?.toString();
+                } else if (messageContent.toString().contains('google.com/maps')) {
+                  // URL formatında: https://www.google.com/maps?q=LAT,LNG
+                  final regex = RegExp(r'q=(-?\d+\.?\d*),(-?\d+\.?\d*)');
+                  final match = regex.firstMatch(messageContent);
+                  if (match != null) {
+                    lat = double.tryParse(match.group(1) ?? '');
+                    lng = double.tryParse(match.group(2) ?? '');
+                  }
+                  // İsim varsa al
+                  if (messageContent.contains(':')) {
+                    locationName = messageContent.split(':').first.replaceAll('📍', '').trim();
+                  }
+                }
+              } catch (e) {
+                print('❌ Konum parse hatası: $e');
+              }
+            }
+            
             merged.add({
               'id': apiMessage['id'].toString(),
-              'message': apiMessage['message_content'] ?? '',
+              'message': messageContent,
               'sender_type': apiMessage['sender_type'] ?? 'customer',
               'timestamp': DateTime.tryParse(apiMessage['created_at'] ?? '') ?? DateTime.now(),
-              'type': apiMessage['message_type'] ?? 'text',
+              'type': messageType,
               'audioPath': apiMessage['file_path'],
               'duration': apiMessage['duration']?.toString() ?? '0',
+              'latitude': lat,
+              'longitude': lng,
+              'locationName': locationName,
             });
           }
 
-          // 🔥 GÜÇLÜ DUPLICATE KONTROLÜ - ID + MESSAGE CONTENT + TIMESTAMP
-          final existingSignatures = _messages.map((m) {
-            final msgContent = m['message']?.toString() ?? '';
-            final msgTime = (m['timestamp'] as DateTime).millisecondsSinceEpoch ~/ 1000; // Saniye hassasiyeti
-            return '${msgContent}_$msgTime';
+          // 🔥 GÜÇLÜ DUPLICATE KONTROLÜ - MESSAGE CONTENT BAZLI (Timestamp olmadan!)
+          // Resim URL'leri için sadece içerik kontrolü yeterli
+          final existingContents = _messages.map((m) {
+            return m['message']?.toString() ?? '';
           }).toSet();
+          
+          // Ayrıca ID bazlı kontrol
+          final existingIds = _messages.map((m) => m['id']?.toString() ?? '').toSet();
           
           merged.removeWhere((msg) {
             final msgContent = msg['message']?.toString() ?? '';
-            final msgTime = (msg['timestamp'] as DateTime).millisecondsSinceEpoch ~/ 1000;
-            final signature = '${msgContent}_$msgTime';
-            return existingSignatures.contains(signature);
+            final msgId = msg['id']?.toString() ?? '';
+            
+            // Eğer içerik zaten varsa (resim URL'si aynıysa) - duplicate
+            if (existingContents.contains(msgContent) && msgContent.isNotEmpty) {
+              print('⚠️ ŞOFÖR: Duplicate engellendi (content): $msgContent');
+              return true;
+            }
+            
+            // Eğer ID zaten varsa - duplicate
+            if (existingIds.contains(msgId) && msgId.isNotEmpty && !msgId.startsWith('temp_')) {
+              print('⚠️ ŞOFÖR: Duplicate engellendi (id): $msgId');
+              return true;
+            }
+            
+            return false;
           });
 
           if (merged.isNotEmpty) {
@@ -272,56 +323,137 @@ class _RideChatScreenState extends State<RideChatScreen> {
                 ),
               ],
             ),
-            child: Row(
-              children: [
-                // Fotoğraf gönder (Kamera + Galeri)
-                IconButton(
-                  onPressed: _sendPhoto,
-                  icon: const Icon(Icons.add_photo_alternate, color: Color(0xFFFFD700)),
-                  tooltip: 'Fotoğraf gönder',
-                ),
-                
-                // 🔥 Konum paylaş
-                IconButton(
-                  onPressed: _sendLocation,
-                  icon: const Icon(Icons.location_on, color: Color(0xFFFFD700)),
-                ),
-                
-                // Sesli mesaj
-                IconButton(
-                  onPressed: _isRecording ? _stopRecording : _startRecording,
-                  icon: Icon(
-                    _isRecording ? Icons.stop : Icons.mic,
-                    color: _isRecording ? Colors.red : const Color(0xFFFFD700),
-                  ),
-                ),
-                
-                // Metin mesaj alanı
-                Expanded(
-                  child: TextFormField(
-                    controller: _messageController,
-                    style: TextStyle(color: Colors.black, fontSize: 16), // SİYAH YAZI
-                    decoration: InputDecoration(
-                      hintText: 'Mesaj yazın',
-                      hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(25),
-                        borderSide: BorderSide.none,
+            child: _isRecording 
+              // 🔥 WHATSAPP TARZI KAYIT UI
+              ? Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      // İptal butonu
+                      IconButton(
+                        onPressed: () {
+                          _stopRecordingTimer();
+                          _audioRecorder?.stopRecorder();
+                          setState(() => _isRecording = false);
+                        },
+                        icon: const Icon(Icons.delete, color: Colors.red, size: 28),
                       ),
-                      filled: true,
-                      fillColor: Colors.grey[100],
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    ),
+                      // Kayıt animasyonu ve süre
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(25),
+                          ),
+                          child: Row(
+                            children: [
+                              // Kırmızı yanıp sönen nokta
+                              TweenAnimationBuilder<double>(
+                                tween: Tween(begin: 0.3, end: 1.0),
+                                duration: const Duration(milliseconds: 500),
+                                builder: (context, value, child) {
+                                  return Container(
+                                    width: 12,
+                                    height: 12,
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.withOpacity(value),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 12),
+                              // Süre
+                              Text(
+                                _formatRecordingTime(_recordingSeconds),
+                                style: const TextStyle(
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const Spacer(),
+                              // Ses dalgası animasyonu
+                              Row(
+                                children: List.generate(8, (index) {
+                                  return TweenAnimationBuilder<double>(
+                                    tween: Tween(begin: 4.0, end: 16.0),
+                                    duration: Duration(milliseconds: 300 + (index * 100)),
+                                    builder: (context, value, child) {
+                                      return Container(
+                                        width: 3,
+                                        height: value,
+                                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red,
+                                          borderRadius: BorderRadius.circular(2),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                }),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      // Gönder butonu
+                      IconButton(
+                        onPressed: _stopRecording,
+                        icon: const Icon(Icons.send, color: Color(0xFFFFD700), size: 28),
+                      ),
+                    ],
                   ),
+                )
+              // Normal mesaj UI
+              : Row(
+                  children: [
+                    // Fotoğraf gönder (Kamera + Galeri)
+                    IconButton(
+                      onPressed: _sendPhoto,
+                      icon: const Icon(Icons.add_photo_alternate, color: Color(0xFFFFD700)),
+                      tooltip: 'Fotoğraf gönder',
+                    ),
+                    
+                    // 🔥 Konum paylaş
+                    IconButton(
+                      onPressed: _sendLocation,
+                      icon: const Icon(Icons.location_on, color: Color(0xFFFFD700)),
+                    ),
+                    
+                    // Sesli mesaj
+                    IconButton(
+                      onPressed: _startRecording,
+                      icon: const Icon(Icons.mic, color: Color(0xFFFFD700)),
+                    ),
+                    
+                    // Metin mesaj alanı
+                    Expanded(
+                      child: TextFormField(
+                        controller: _messageController,
+                        style: TextStyle(color: Colors.black, fontSize: 16), // SİYAH YAZI
+                        decoration: InputDecoration(
+                          hintText: 'Mesaj yazın',
+                          hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(25),
+                            borderSide: BorderSide.none,
+                          ),
+                          filled: true,
+                          fillColor: Colors.grey[100],
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        ),
+                      ),
+                    ),
+                    
+                    // Gönder butonu
+                    IconButton(
+                      onPressed: _sendMessage,
+                      icon: const Icon(Icons.send, color: Color(0xFFFFD700)),
+                    ),
+                  ],
                 ),
-                
-                // Gönder butonu
-                IconButton(
-                  onPressed: _sendMessage,
-                  icon: const Icon(Icons.send, color: Color(0xFFFFD700)),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -361,27 +493,9 @@ class _RideChatScreenState extends State<RideChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Mesaj içeriği
+            // 🔥 WHATSAPP TARZI SES MESAJI
             if (message['type'] == 'audio')
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    onPressed: () => _playAudio(message['audioPath']),
-                    icon: Icon(
-                      Icons.play_circle_fill,
-                      color: isMe ? Colors.white : const Color(0xFFFFD700),
-                      size: 32,
-                    ),
-                  ),
-                  Text(
-                    message['duration'] ?? '0:00',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: isMe ? Colors.white : Colors.black87,
-                    ),
-                  ),
-                ],
-              )
+              _buildWhatsAppAudioMessage(message, isMe)
             else if (message['type'] == 'image')
               GestureDetector(
                 onTap: () => _showFullScreenImage(message['message']),
@@ -469,14 +583,20 @@ class _RideChatScreenState extends State<RideChatScreen> {
                     if (app == null) return;
                     
                     String mapUrl;
+                    String fallbackUrl;
+                    
                     if (app == 'google') {
                       // Google Maps URI
                       mapUrl = Platform.isIOS
                           ? 'comgooglemaps://?q=$lat,$lng'
                           : 'geo:$lat,$lng?q=$lat,$lng($locationName)';
+                      fallbackUrl = 'https://www.google.com/maps?q=$lat,$lng';
                     } else {
-                      // Yandex Maps URI
-                      mapUrl = 'yandexmaps://maps.yandex.com/?ll=$lng,$lat&z=16';
+                      // Yandex Maps URI - Yandex Navigator
+                      mapUrl = Platform.isIOS
+                          ? 'yandexnavi://build_route_on_map?lat_to=$lat&lon_to=$lng'
+                          : 'yandexnavi://build_route_on_map?lat_to=$lat&lon_to=$lng';
+                      fallbackUrl = 'https://yandex.com/maps/?pt=$lng,$lat&z=16';
                     }
                     
                     print('🗺️ ŞOFÖR Harita açılıyor: $mapUrl');
@@ -485,8 +605,8 @@ class _RideChatScreenState extends State<RideChatScreen> {
                     if (await canLaunchUrl(uri)) {
                       await launchUrl(uri, mode: LaunchMode.externalApplication);
                     } else {
-                      // Uygulama yoksa web tarayıcıda aç
-                      final webUrl = Uri.parse('https://www.google.com/maps?q=$lat,$lng');
+                      // Uygulama yoksa web tarayıcıda aç - SEÇİLEN HARİTA İÇİN!
+                      final webUrl = Uri.parse(fallbackUrl);
                       await launchUrl(webUrl, mode: LaunchMode.externalApplication);
                     }
                     
@@ -500,60 +620,143 @@ class _RideChatScreenState extends State<RideChatScreen> {
                     );
                   }
                 },
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: (isMe ? Colors.white : const Color(0xFFFFD700)).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isMe ? const Color(0xFFFFD700) : Colors.white,
-                      width: 2,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: const BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.location_on,
-                          color: Colors.white,
-                          size: 20,
-                        ),
+                child: Builder(
+                  builder: (context) {
+                    // Konum bilgisini al
+                    double? mapLat = message['latitude'];
+                    double? mapLng = message['longitude'];
+                    String mapName = message['locationName'] ?? 'Konum';
+                    
+                    // JSON formatında mı kontrol et
+                    if ((mapLat == null || mapLng == null) && message['message'].toString().startsWith('{')) {
+                      try {
+                        final locationData = json.decode(message['message']);
+                        mapLat = (locationData['latitude'] as num?)?.toDouble();
+                        mapLng = (locationData['longitude'] as num?)?.toDouble();
+                        mapName = locationData['name'] ?? 'Konum';
+                      } catch (_) {}
+                    }
+                    
+                    // URL formatında mı kontrol et
+                    if ((mapLat == null || mapLng == null) && message['message'].toString().contains('google.com/maps')) {
+                      try {
+                        final regex = RegExp(r'q=(-?\d+\.?\d*),(-?\d+\.?\d*)');
+                        final match = regex.firstMatch(message['message']);
+                        if (match != null) {
+                          mapLat = double.tryParse(match.group(1) ?? '');
+                          mapLng = double.tryParse(match.group(2) ?? '');
+                        }
+                      } catch (_) {}
+                    }
+                    
+                    final hasValidLocation = mapLat != null && mapLng != null;
+                    
+                    return Container(
+                      width: 220,
+                      decoration: BoxDecoration(
+                        color: isMe ? const Color(0xFF1E3A5F) : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '📍 Konum Paylaşıldı',
-                              style: TextStyle(
-                                color: isMe ? Colors.white : Colors.black87,
-                                fontWeight: FontWeight.bold,
-                              ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // WhatsApp tarzı harita önizlemesi
+                          ClipRRect(
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                            child: hasValidLocation
+                                ? Image.network(
+                                    'https://maps.googleapis.com/maps/api/staticmap?center=$mapLat,$mapLng&zoom=15&size=300x150&markers=color:red%7C$mapLat,$mapLng&key=AIzaSyAmPUh6vlin_kvFvssOyKHz5BBjp5WQMaY',
+                                    height: 120,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                    loadingBuilder: (context, child, loadingProgress) {
+                                      if (loadingProgress == null) return child;
+                                      return Container(
+                                        height: 120,
+                                        color: Colors.grey[300],
+                                        child: const Center(
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Color(0xFFFFD700),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    errorBuilder: (_, __, ___) => Container(
+                                      height: 120,
+                                      color: Colors.grey[300],
+                                      child: const Center(
+                                        child: Icon(Icons.map, size: 48, color: Colors.grey),
+                                      ),
+                                    ),
+                                  )
+                                : Container(
+                                    height: 120,
+                                    color: Colors.grey[300],
+                                    child: const Center(
+                                      child: Icon(Icons.location_on, size: 48, color: Colors.red),
+                                    ),
+                                  ),
+                          ),
+                          // Alt bilgi kısmı
+                          Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.red,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.location_on,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '📍 Konum',
+                                        style: TextStyle(
+                                          color: isMe ? Colors.white : Colors.black87,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Haritada aç',
+                                        style: TextStyle(
+                                          color: isMe ? Colors.white70 : Colors.grey[600],
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.arrow_forward_ios,
+                                  size: 12,
+                                  color: isMe ? Colors.white54 : Colors.grey,
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Haritada görüntülemek için tıklayın',
-                              style: TextStyle(
-                                color: isMe ? Colors.white70 : Colors.grey[600],
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                      const Icon(
-                        Icons.arrow_forward_ios,
-                        size: 14,
-                        color: Colors.grey,
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               )
             else
@@ -691,27 +894,36 @@ class _RideChatScreenState extends State<RideChatScreen> {
           uploadedImageUrl = await _uploadImage(image.path, int.parse(widget.rideId));
           if (uploadedImageUrl != null) {
             print('✅ ŞOFÖR Resim sunucuya yüklendi: $uploadedImageUrl');
-            // Mesajı güncelle - artık URL kullan
+            // Mesajı güncelle - tempId ile bul ve URL'i güncelle
             setState(() {
-              _messages.last['message'] = uploadedImageUrl;
+              final index = _messages.indexWhere((msg) => msg['id'] == tempId);
+              if (index >= 0) {
+                _messages[index]['message'] = uploadedImageUrl;
+                _messages[index]['synced'] = true;
+              }
             });
             await _persistMessages();
           } else {
-            print('⚠️ ŞOFÖR Resim sunucuya yüklenemedi, local path kullanılacak');
+            print('⚠️ ŞOFÖR Resim sunucuya yüklenemedi, mesaj kaldırılıyor');
+            setState(() {
+              _messages.removeWhere((msg) => msg['id'] == tempId);
+            });
+            await _persistMessages();
+            return; // Upload başarısızsa API'ye gönderme
           }
         } catch (uploadError) {
           print('❌ ŞOFÖR Upload hatası: $uploadError');
+          setState(() {
+            _messages.removeWhere((msg) => msg['id'] == tempId);
+          });
+          await _persistMessages();
+          return; // Hata durumunda API'ye gönderme
         }
 
         // API'ye gönder - SADECE UPLOAD BAŞARILI İSE!
         if (uploadedImageUrl != null && uploadedImageUrl.isNotEmpty) {
           await _sendMessageToAPI(uploadedImageUrl, 'image');
-          print('SOFOR: Fotograf API gonderildi');
-        } else {
-          print('SOFOR: Upload basarisiz');
-          setState(() {
-            _messages.removeWhere((msg) => msg['id'] == tempId);
-          });
+          print('✅ ŞOFÖR: Fotoğraf API\'ye gönderildi: $uploadedImageUrl');
         }
         
         ScaffoldMessenger.of(context).showSnackBar(
@@ -881,16 +1093,40 @@ class _RideChatScreenState extends State<RideChatScreen> {
     }
   }
   
-  // 🔍 KONUM ARAMA DIALOG
+  // 🔍 KONUM ARAMA DIALOG - OTOMATİK ARAMA İLE
   Future<Map<String, dynamic>?> _showLocationSearchDialog() async {
     final TextEditingController searchController = TextEditingController();
     List<Map<String, dynamic>> searchResults = [];
     bool isSearching = false;
+    Timer? debounceTimer;
     
     return await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+          
+          // 🔥 OTOMATİK ARAMA FONKSİYONU
+          void performSearch(String query) async {
+            if (query.trim().length < 2) {
+              setDialogState(() {
+                searchResults.clear();
+                isSearching = false;
+              });
+              return;
+            }
+            
+            setDialogState(() {
+              isSearching = true;
+            });
+            
+            final results = await _searchLocation(query);
+            
+            setDialogState(() {
+              isSearching = false;
+              searchResults = results;
+            });
+          }
+          
           return AlertDialog(
             title: const Text('Konum Ara'),
             content: SizedBox(
@@ -901,8 +1137,9 @@ class _RideChatScreenState extends State<RideChatScreen> {
                   // Arama kutusu
                   TextField(
                     controller: searchController,
+                    autofocus: true,
                     decoration: InputDecoration(
-                      hintText: 'Adres veya yer adı...',
+                      hintText: 'Adres veya yer adı yazın...',
                       prefixIcon: const Icon(Icons.search, color: Color(0xFFFFD700)),
                       suffixIcon: isSearching
                           ? const SizedBox(
@@ -913,33 +1150,31 @@ class _RideChatScreenState extends State<RideChatScreen> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               ),
                             )
-                          : IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                searchController.clear();
-                                setDialogState(() {
-                                  searchResults.clear();
-                                });
-                              },
-                            ),
+                          : searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    searchController.clear();
+                                    setDialogState(() {
+                                      searchResults.clear();
+                                    });
+                                  },
+                                )
+                              : null,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    onSubmitted: (value) async {
-                      if (value.trim().isEmpty) return;
-                      
-                      setDialogState(() {
-                        isSearching = true;
-                        searchResults.clear();
+                    // 🔥 YAZARKEN OTOMATİK ARAMA (DEBOUNCE 500ms)
+                    onChanged: (value) {
+                      debounceTimer?.cancel();
+                      debounceTimer = Timer(const Duration(milliseconds: 500), () {
+                        performSearch(value);
                       });
-                      
-                      final results = await _searchLocation(value);
-                      
-                      setDialogState(() {
-                        isSearching = false;
-                        searchResults = results;
-                      });
+                    },
+                    onSubmitted: (value) {
+                      debounceTimer?.cancel();
+                      performSearch(value);
                     },
                   ),
                   const SizedBox(height: 16),
@@ -955,18 +1190,41 @@ class _RideChatScreenState extends State<RideChatScreen> {
                           return ListTile(
                             leading: const Icon(Icons.place, color: Colors.red),
                             title: Text(result['name']),
-                            subtitle: Text(result['address'] ?? ''),
-                            onTap: () => Navigator.pop(context, result),
+                            subtitle: Text(
+                              result['address'] ?? '',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () {
+                              debounceTimer?.cancel();
+                              Navigator.pop(context, result);
+                            },
                           );
                         },
                       ),
                     )
-                  else if (!isSearching && searchController.text.isNotEmpty)
+                  else if (isSearching)
+                    const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text(
+                        'Aranıyor...',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  else if (!isSearching && searchController.text.length >= 2)
                     const Padding(
                       padding: EdgeInsets.all(16.0),
                       child: Text(
                         'Sonuç bulunamadı',
                         style: TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  else
+                    const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text(
+                        'En az 2 karakter yazın',
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
                       ),
                     ),
                 ],
@@ -974,7 +1232,10 @@ class _RideChatScreenState extends State<RideChatScreen> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () {
+                  debounceTimer?.cancel();
+                  Navigator.pop(context);
+                },
                 child: const Text('İptal'),
               ),
             ],
@@ -987,7 +1248,7 @@ class _RideChatScreenState extends State<RideChatScreen> {
   // 🌍 KONUM ARAMA API (Google Places)
   Future<List<Map<String, dynamic>>> _searchLocation(String query) async {
     try {
-      const apiKey = 'AIzaSyC_j9KEoNv7-mRMj2m6uh5NeGsqWe0Phlw'; // Google Maps API Key
+      const apiKey = 'AIzaSyAmPUh6vlin_kvFvssOyKHz5BBjp5WQMaY'; // Google Maps API Key (FunBreak Vale)
       
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/textsearch/json?query=$query&key=$apiKey&language=tr&region=TR',
@@ -1038,18 +1299,29 @@ class _RideChatScreenState extends State<RideChatScreen> {
       final driverId = int.tryParse(prefs.getString('driver_id') ?? '0') ?? 0;
       final rideId = int.tryParse(widget.rideId) ?? 0;
 
+      // 🔥 Mesaj tipine göre doğru alan kullan - DUPLICATE ÖNLEME
+      final Map<String, dynamic> requestBody = {
+        'ride_id': rideId,
+        'sender_type': widget.isDriver ? 'driver' : 'customer',
+        'sender_id': driverId,
+        'message_type': type,
+        'duration': type == 'audio' ? 5 : 0,
+      };
+      
+      // Text ve location mesajları message_content'e, image/audio file_path'e
+      if (type == 'text' || type == 'location') {
+        requestBody['message_content'] = message;
+        requestBody['file_path'] = null;
+      } else {
+        // image veya audio
+        requestBody['message_content'] = ''; // Boş string, null değil
+        requestBody['file_path'] = message;
+      }
+
       final response = await http.post(
         Uri.parse('https://admin.funbreakvale.com/api/send_ride_message.php'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'ride_id': rideId,
-          'sender_type': widget.isDriver ? 'driver' : 'customer',
-          'sender_id': driverId,
-          'message_type': type,
-          'message_content': type == 'text' ? message : null,
-          'file_path': type != 'text' ? message : null,
-          'duration': type == 'audio' ? 5 : 0,
-        }),
+        body: jsonEncode(requestBody),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -1158,46 +1430,71 @@ class _RideChatScreenState extends State<RideChatScreen> {
         _recordingStartTime = DateTime.now();
       });
       
-      print('🎤 ŞOFÖR GERÇEK SES KAYDI BAŞLATILDI: $_currentRecordingPath');
+      // 🔥 KAYIT SÜRE TIMER'I BAŞLAT
+      _startRecordingTimer();
+      
+      // Ses kaydı başlatıldı
     } catch (e) {
-      print('❌ ŞOFÖR Ses kayıt başlatma hatası: $e');
+      // Ses kayıt başlatma hatası: $e
       setState(() => _isRecording = false);
     }
+  }
+  
+  // 🔥 KAYIT SÜRE TIMER'I
+  Timer? _recordingTimer;
+  int _recordingSeconds = 0;
+  
+  void _startRecordingTimer() {
+    _recordingSeconds = 0;
+    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        _recordingSeconds++;
+      });
+    });
+  }
+  
+  void _stopRecordingTimer() {
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
+  }
+  
+  String _formatRecordingTime(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 
   Future<void> _stopRecording() async {
     if (!_isRecording || _currentRecordingPath == null) return;
     
+    _stopRecordingTimer();
+    
     try {
       await _audioRecorder!.stopRecorder();
       
-      final recordingDuration = _recordingStartTime != null 
-        ? DateTime.now().difference(_recordingStartTime!).inSeconds
-        : 0;
+      final recordingDuration = _recordingSeconds;
       
       setState(() {
         _isRecording = false;
         _messages.add({
           'id': DateTime.now().millisecondsSinceEpoch.toString(),
-          'message': 'Sesli mesaj (${recordingDuration}s)',
+          'message': _currentRecordingPath!,
           'sender_type': widget.isDriver ? 'driver' : 'customer',
           'timestamp': DateTime.now(),
           'type': 'audio',
-          'duration': '0:${recordingDuration.toString().padLeft(2, '0')}',
+          'duration': recordingDuration,
           'audioPath': _currentRecordingPath,
           'synced': false,
         });
       });
       await _persistMessages();
-      
-      await _sendAudioMessage(_currentRecordingPath!, recordingDuration);
       _scrollToBottom();
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('🎤 ŞOFÖR ${recordingDuration}s sesli mesaj gönderildi!'), backgroundColor: Colors.green),
-      );
+      await _sendAudioMessage(_currentRecordingPath!, recordingDuration);
+      
+      // Sesli mesaj gönderildi
     } catch (e) {
-      print('❌ ŞOFÖR Ses kayıt durdurma hatası: $e');
+      // Ses kayıt durdurma hatası: $e
       setState(() => _isRecording = false);
     }
   }
@@ -1281,14 +1578,146 @@ class _RideChatScreenState extends State<RideChatScreen> {
     }
   }
   
-  Future<void> _playAudio(String? audioPath) async {
+  // 🔥 WHATSAPP TARZI SES MESAJI WIDGET
+  String? _currentlyPlayingId;
+  double _playbackProgress = 0.0;
+  
+  Widget _buildWhatsAppAudioMessage(Map<String, dynamic> message, bool isMe) {
+    final messageId = message['id']?.toString() ?? '';
+    final isPlaying = _currentlyPlayingId == messageId;
+    final duration = message['duration'] is int 
+        ? message['duration'] as int 
+        : int.tryParse(message['duration']?.toString() ?? '0') ?? 0;
+    final durationText = '${(duration ~/ 60).toString().padLeft(2, '0')}:${(duration % 60).toString().padLeft(2, '0')}';
+    
+    return GestureDetector(
+      onTap: () => _playAudio(message['audioPath'] ?? message['message'] ?? '', messageId),
+      child: Container(
+        width: 220,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMe ? const Color(0xFF1E3A5F) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            // Play/Pause butonu
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFD700),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isPlaying ? Icons.pause : Icons.play_arrow,
+                color: Colors.black,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Ses dalgası ve süre
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // WhatsApp tarzı ses dalgası
+                  Row(
+                    children: List.generate(20, (index) {
+                      // Rastgele yükseklikler oluştur (ses dalgası efekti)
+                      final heights = [8.0, 12.0, 6.0, 14.0, 10.0, 16.0, 8.0, 12.0, 18.0, 10.0, 
+                                       14.0, 8.0, 16.0, 12.0, 6.0, 14.0, 10.0, 8.0, 12.0, 6.0];
+                      final height = heights[index % heights.length];
+                      final isActive = isPlaying && (index / 20) <= _playbackProgress;
+                      
+                      return Container(
+                        width: 3,
+                        height: height,
+                        margin: const EdgeInsets.symmetric(horizontal: 1),
+                        decoration: BoxDecoration(
+                          color: isActive 
+                              ? const Color(0xFFFFD700)
+                              : (isMe ? Colors.white38 : Colors.grey[400]),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 4),
+                  // Süre
+                  Text(
+                    durationText,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isMe ? Colors.white70 : Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Future<void> _playAudio(String? audioPath, [String? messageId]) async {
     if (audioPath == null) return;
     
     try {
-      await _audioPlayer!.startPlayer(fromURI: audioPath);
-      print('🔊 ŞOFÖR Ses oynatılıyor: $audioPath');
+      // Aynı mesaj çalıyorsa durdur
+      if (_currentlyPlayingId == messageId && messageId != null) {
+        await _audioPlayer!.stopPlayer();
+        setState(() {
+          _currentlyPlayingId = null;
+          _playbackProgress = 0.0;
+        });
+        return;
+      }
+      
+      if (await File(audioPath).exists()) {
+        setState(() {
+          _currentlyPlayingId = messageId;
+          _playbackProgress = 0.0;
+        });
+        
+        await _audioPlayer!.startPlayer(
+          fromURI: audioPath,
+          whenFinished: () {
+            setState(() {
+              _currentlyPlayingId = null;
+              _playbackProgress = 0.0;
+            });
+          },
+        );
+        
+        // Progress güncelleme
+        _audioPlayer!.onProgress!.listen((event) {
+          if (event.duration.inMilliseconds > 0) {
+            setState(() {
+              _playbackProgress = event.position.inMilliseconds / event.duration.inMilliseconds;
+            });
+          }
+        });
+        
+        // Ses mesajı oynatılıyor
+      } else {
+        // Ses dosyası bulunamadı
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('❌ Ses dosyası bulunamadı')),
+          );
+        }
+      }
     } catch (e) {
-      print('❌ ŞOFÖR Ses oynatma hatası: $e');
+      // Ses oynatma hatası: $e
     }
   }
   
