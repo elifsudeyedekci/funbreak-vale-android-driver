@@ -1,3 +1,4 @@
+import 'dart:io';  // ⚠️ PLATFORM CHECK!
 import 'dart:convert';
 import 'dart:typed_data'; // 🔥 Int64List için!
 import 'package:flutter/material.dart'; // COLOR İÇİN GEREKLİ!
@@ -57,7 +58,7 @@ class AdvancedNotificationService {
     ),
   };
   
-  // SERVİS BAŞLATMA
+  // SERVİS BAŞLATMA - PLATFORM-SPECIFIC!
   static Future<void> initialize() async {
     // 🔥 ZATEN BAŞLATILDIYSA ATLA!
     if (_initialized) {
@@ -66,22 +67,39 @@ class AdvancedNotificationService {
     }
     
     try {
-      print('🔔 Sürücü bildirim servisi başlatılıyor...');
+      print('🔔 Sürücü bildirim servisi başlatılıyor... (${Platform.operatingSystem})');
       
-      // Local notifications setup
-      const AndroidInitializationSettings android = AndroidInitializationSettings('@mipmap/ic_launcher');
-      const InitializationSettings settings = InitializationSettings(android: android);
+      // ⚠️ PLATFORM-SPECIFIC INITIALIZATION
+      if (Platform.isIOS) {
+        // iOS initialization (iOS 10+)
+        const iosSettings = DarwinInitializationSettings(
+          requestAlertPermission: true,
+          requestBadgePermission: true,
+          requestSoundPermission: true,
+        );
+        
+        await _localNotifications.initialize(
+          const InitializationSettings(iOS: iosSettings),
+          onDidReceiveNotificationResponse: _onNotificationTapped,
+        );
+        print('✅ iOS bildirim sistemi başlatıldı');
+        
+      } else {
+        // Android initialization
+        const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+        await _localNotifications.initialize(
+          const InitializationSettings(android: androidSettings),
+          onDidReceiveNotificationResponse: _onNotificationTapped,
+        );
+        
+        // Android notification channels oluştur
+        await _createNotificationChannels();
+        print('✅ Android bildirim sistemi başlatıldı');
+      }
       
-      await _localNotifications.initialize(
-        settings,
-        onDidReceiveNotificationResponse: _onNotificationTapped,
-      );
-      
-      // Android notification channels - SÜRÜCÜ KANALLARI!
-      await _createNotificationChannels();
-      
-      // Firebase Messaging setup
+      // Firebase Messaging setup (HER İKİ PLATFORM)
       _messaging = FirebaseMessaging.instance;
+      await _messaging!.setAutoInitEnabled(true);
       
       // Permission iste
       await _requestPermissions();
@@ -114,7 +132,13 @@ class AdvancedNotificationService {
   
   // ANDROID BİLDİRİM KANALLARI - SÜRÜCÜ KANALLARI!
   static Future<void> _createNotificationChannels() async {
-    print('🔔 [ŞOFÖR] CHANNEL OLUŞTURMA BAŞLADI!');
+    // ⚠️ iOS'te channel sistemi yok, sadece Android!
+    if (Platform.isIOS) {
+      print('⏭️ iOS - Channel sistemi yok, atlanıyor');
+      return;
+    }
+    
+    print('🔔 [ŞOFÖR] ANDROID CHANNEL OLUŞTURMA BAŞLADI!');
     final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     
     if (androidPlugin == null) {
@@ -202,19 +226,170 @@ class AdvancedNotificationService {
     print('✅ [ŞOFÖR] ${channels.length} sürücü bildirim kanalı OLUŞTURULDU (IMPORTANCE MAX!)');
   }
   
-  // İZİN İSTEME
+  // İZİN İSTEME VE TOKEN ALMA - iOS KRİTİK!
   static Future<void> _requestPermissions() async {
-    final settings = await _messaging!.requestPermission(
-      alert: true,
-      announcement: false,
-      badge: true,
-      carPlay: false,
-      criticalAlert: false,
-      provisional: false,
-      sound: true,
-    );
-    
-    print('🔔 Sürücü bildirim izni durumu: ${settings.authorizationStatus}');
+    try {
+      // ✅ ÖNCE İZİN İSTE (iOS için zorunlu)
+      final settings = await _messaging!.requestPermission(
+        alert: true,
+        announcement: false,
+        badge: true,
+        carPlay: false,
+        criticalAlert: false,
+        provisional: false,
+        sound: true,
+      );
+      
+      print('🔔 Sürücü bildirim izni durumu: ${settings.authorizationStatus}');
+      
+      // iOS için authorizationStatus kontrol
+      if (Platform.isIOS) {
+        if (settings.authorizationStatus != AuthorizationStatus.authorized &&
+            settings.authorizationStatus != AuthorizationStatus.provisional) {
+          print('❌ iOS bildirim izni verilmedi: ${settings.authorizationStatus}');
+          return;
+        }
+
+        await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+        
+        // 🔄 iOS APNs TOKEN - ARKA PLANDA BEKLE (UI BLOKE ETME!)
+        _waitForApnsAndGetFcmToken();
+      } else {
+        // Android için direkt FCM token al
+        _getFcmTokenDirect();
+      }
+    } catch (e) {
+      print('❌ İzin isteme hatası: $e');
+    }
+  }
+  
+  // ✅ iOS için APNs bekle ve FCM token al
+  static Future<void> _waitForApnsAndGetFcmToken() async {
+    try {
+      // APNs token'ı al - Runner.entitlements ile artık çalışmalı
+      String? apnsToken;
+      
+      // 🔥 10 deneme yap (toplam 10 saniye) - iOS APNs bazen yavaş!
+      print('📱 iOS APNs token (Vale) bekleniyor (max 10 saniye)...');
+      for (int i = 0; i < 10; i++) {
+        apnsToken = await _messaging!.getAPNSToken();
+        if (apnsToken != null) {
+          print('✅ APNs token (Vale) alındı (${i+1}. deneme): ${apnsToken.substring(0, 20)}...');
+          break;
+        }
+        print('   ⏳ APNs token (Vale) henüz yok - deneme ${i+1}/10');
+        await Future.delayed(Duration(seconds: 1));
+      }
+      
+      if (apnsToken == null) {
+        print('⚠️ APNs token (Vale) alınamadı 10 saniye içinde!');
+        print('   🔍 Kontrol et: Runner.entitlements, Provisioning Profile, Firebase Console APNs Key');
+      }
+      
+      // FCM token al
+      await _getFcmTokenDirect();
+    } catch (e) {
+      print('❌ APNs/FCM hatası: $e');
+    }
+  }
+  
+  // ✅ FCM Token al (Android ve iOS ortak) - RATE LIMIT KORUMALI!
+  static Future<void> _getFcmTokenDirect() async {
+    try {
+      // 🔥 RATE LIMIT KORUMASI
+      final prefs = await SharedPreferences.getInstance();
+      final lastFailTime = prefs.getString('fcm_token_fail_time');
+      final failCount = prefs.getInt('fcm_token_fail_count') ?? 0;
+      
+      if (lastFailTime != null) {
+        final failTime = DateTime.tryParse(lastFailTime);
+        if (failTime != null) {
+          final diff = DateTime.now().difference(failTime);
+          
+          // 3+ başarısız deneme → OTOMATİK TOKEN RESET!
+          if (failCount >= 3) {
+            print('🔄 FCM Rate limit reset başlatılıyor (failCount: $failCount)...');
+            await _resetFcmToken();
+            await prefs.remove('fcm_token_fail_time');
+            await prefs.setInt('fcm_token_fail_count', 0);
+            return;
+          }
+          
+          if (diff.inSeconds < 30) {
+            print('⏳ FCM Rate limit koruması: ${30 - diff.inSeconds} saniye bekle (deneme: $failCount)');
+            return;
+          }
+        }
+      }
+      
+      final token = await _messaging!.getToken().timeout(
+        Duration(seconds: 5),
+        onTimeout: () {
+          print('⏱️ FCM token alma timeout!');
+          return null;
+        },
+      );
+      
+      if (token != null) {
+        print('✅ FCM Token alındı: ${token.substring(0, 30)}...');
+        await prefs.remove('fcm_token_fail_time');
+        await prefs.setInt('fcm_token_fail_count', 0);
+        await _updateDriverTokenOnServer(token);
+      } else {
+        print('⚠️ FCM token null döndü');
+        await prefs.setString('fcm_token_fail_time', DateTime.now().toIso8601String());
+        await prefs.setInt('fcm_token_fail_count', failCount + 1);
+      }
+    } catch (e) {
+      print('❌ FCM token alma hatası: $e');
+      if (e.toString().contains('Too many') || e.toString().contains('unknown')) {
+        final prefs = await SharedPreferences.getInstance();
+        final failCount = prefs.getInt('fcm_token_fail_count') ?? 0;
+        await prefs.setString('fcm_token_fail_time', DateTime.now().toIso8601String());
+        await prefs.setInt('fcm_token_fail_count', failCount + 1);
+        print('⏳ Rate limit algılandı - deneme: ${failCount + 1}');
+      }
+    }
+  }
+  
+  // 🔥 FCM TOKEN RESET - RATE LIMIT'İ ANINDA SIFIRLAR!
+  static Future<void> _resetFcmToken() async {
+    try {
+      print('🔄 FCM Token siliniyor (rate limit reset)...');
+      await _messaging!.deleteToken();
+      print('✅ FCM Token silindi');
+      
+      await Future.delayed(Duration(seconds: 2));
+      
+      final newToken = await _messaging!.getToken();
+      if (newToken != null) {
+        print('✅ Yeni FCM Token alındı: ${newToken.substring(0, 30)}...');
+        await _updateDriverTokenOnServer(newToken);
+      }
+      print('✅ FCM Rate limit reset tamamlandı!');
+    } catch (e) {
+      print('❌ FCM Token reset hatası: $e');
+    }
+  }
+  
+  // 🔧 MANUEL RATE LIMIT RESET - Ayarlardan çağrılabilir!
+  static Future<bool> manualResetRateLimit() async {
+    try {
+      print('🔄 Manuel FCM rate limit reset başlatılıyor...');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('fcm_token_fail_time');
+      await prefs.setInt('fcm_token_fail_count', 0);
+      await _resetFcmToken();
+      print('✅ Manuel rate limit reset tamamlandı!');
+      return true;
+    } catch (e) {
+      print('❌ Manuel rate limit reset hatası: $e');
+      return false;
+    }
   }
   
   // SÜRÜCÜ TOPIC SUBSCRIBE
@@ -290,14 +465,14 @@ class AdvancedNotificationService {
         final activeRideJson = prefs.getString('active_driver_ride_data');
         
         if (activeRideJson != null && activeRideJson.isNotEmpty) {
-          print('⚠️ [SÜRÜCÜ FOREGROUND] AKTİF YOLCULUK VAR - YENİ TALEP GÖSTERILMEYECEK!');
+          print('⚠️ [SÜRÜCÜ FOREGROUND iOS] AKTİF YOLCULUK VAR - YENİ TALEP GÖSTERILMEYECEK!');
           print('   ❌ Yeni talep atlandı - sürücü zaten işte');
           return; // Bildirim gösterme ve persist etme!
         }
         
-        print('✅ [SÜRÜCÜ FOREGROUND] Aktif yolculuk yok - yeni talep gösterilebilir');
+        print('✅ [SÜRÜCÜ FOREGROUND iOS] Aktif yolculuk yok - yeni talep gösterilebilir');
       } catch (e) {
-        print('⚠️ Aktif yolculuk kontrolü hatası: $e');
+        print('⚠️ iOS aktif yolculuk kontrolü hatası: $e');
       }
     }
 
@@ -355,28 +530,60 @@ class AdvancedNotificationService {
     await _updateDriverTokenOnServer(token);
   }
   
-  // LOCAL BİLDİRİM GÖSTER - SÜRÜCÜ STILI!
+  // LOCAL BİLDİRİM GÖSTER - PLATFORM-AWARE!
   static Future<void> _showLocalNotification(RemoteMessage message) async {
     final notification = message.notification;
     
-    // 🔥 HER ZAMAN BİZİM LOCAL'İ GÖSTER - HEADS-UP GARANTİLİ!
-    if (notification != null) {
-      print('✅ [ŞOFÖR] Local notification gösteriliyor (heads-up garantisi için)');
-      // FCM de gösterebilir ama bizimki daha agresif - heads-up olur!
-      
-      // 🔥 UNIQUE ID - Hash ile garanti unique
-      final timestamp = DateTime.now();
-      final uniqueId = (timestamp.millisecondsSinceEpoch + timestamp.microsecond).hashCode.abs() % 2147483647;
-      
-      // 🔥 HER BİLDİRİM İÇİN FARKLI TİTREŞİM!
-      final vibrationPattern = Int64List.fromList([0, 250 + (uniqueId % 200), 250, 250]);
-      
-      // 🔥 HER BİLDİRİM TİPİ İÇİN AYRI CHANNEL - ANDROID RATE-LIMIT BYPASS!
-      final notificationType = message.data['type'] ?? message.data['notification_type'] ?? '';
-      String channelId;
-      String channelName;
-      String channelDesc;
-      String sound = 'notification';
+    if (notification == null) {
+      print('⚠️ ŞOFÖR Notification null');
+      return;
+    }
+    
+    print('✅ [ŞOFÖR] Local notification gösteriliyor');
+    
+    // iOS - DETAYLI GÖSTER!
+    if (Platform.isIOS) {
+      try {
+        final notificationId = DateTime.now().millisecondsSinceEpoch.remainder(100000);
+        print('📱 [ŞOFÖR] iOS bildirim gösteriliyor - ID: $notificationId');
+        print('   Title: ${notification.title}');
+        print('   Body: ${notification.body}');
+        
+        await _localNotifications.show(
+          notificationId,
+          notification.title ?? 'FunBreak Vale Sürücü',
+          notification.body ?? '',
+          NotificationDetails(
+            iOS: DarwinNotificationDetails(
+              presentAlert: true,  // iOS 13 ve altı için
+              presentBanner: true, // iOS 14+ için - EKRAN ÜSTÜNDE BANNER!
+              presentList: true,   // Notification Center'da göster
+              presentBadge: true,
+              presentSound: true,
+              badgeNumber: 1,
+              subtitle: message.data['type'] ?? '',
+              threadIdentifier: 'funbreak_vale_driver',
+            ),
+          ),
+          payload: jsonEncode(message.data),
+        );
+        print('✅ ŞOFÖR iOS notification gösterildi!');
+      } catch (e) {
+        print('❌ ŞOFÖR iOS notification error: $e');
+      }
+      return;
+    }
+    
+    // ANDROID - CHANNEL SİSTEMİ
+    final timestamp = DateTime.now();
+    final uniqueId = (timestamp.millisecondsSinceEpoch + timestamp.microsecond).hashCode.abs() % 2147483647;
+    final vibrationPattern = Int64List.fromList([0, 250 + (uniqueId % 200), 250, 250]);
+    
+    final notificationType = message.data['type'] ?? message.data['notification_type'] ?? '';
+    String channelId;
+    String channelName;
+    String channelDesc;
+    String sound = 'notification';
       
       if (notificationType == 'new_ride_request') {
         channelId = 'rides'; // ✅ Yeni talep
@@ -398,46 +605,68 @@ class AdvancedNotificationService {
       
       final currentTime = DateTime.now().millisecondsSinceEpoch;
       
-      // 🔥 BigTextStyle ile dikkat çekici bildirim
-      final BigTextStyleInformation bigTextStyle = BigTextStyleInformation(
-        notification.body ?? '',
-        contentTitle: notification.title,
-        htmlFormatContentTitle: true,
-        htmlFormatBigText: true,
-      );
+      // ⚠️ PLATFORM-SPECIFIC NOTIFICATION DETAILS
+      NotificationDetails details;
       
-      final NotificationDetails details = NotificationDetails(
-        android: AndroidNotificationDetails(
-          channelId,
-          channelName,
-          channelDescription: channelDesc,
-          importance: Importance.max,
-          priority: Priority.max,
-          sound: RawResourceAndroidNotificationSound(sound),
-          icon: '@mipmap/ic_launcher',
-          color: const Color(0xFFFFD700),
-          enableVibration: true,
-          playSound: true,
-          visibility: NotificationVisibility.public,
-          showWhen: true,
-          when: currentTime,
-          ticker: '${notification.title} - $uniqueId', // 🔥 Her bildirim FARKLI ticker
-          autoCancel: true,
-          onlyAlertOnce: false,
-          enableLights: true,
-          ledColor: const Color(0xFFFFD700),
-          ledOnMs: 1000,
-          ledOffMs: 500,
-          category: AndroidNotificationCategory.call,
-          groupKey: 'funbreak_driver_$uniqueId', // 🔥 Her bildirim KENDİ GRUBU!
-          setAsGroupSummary: false,
-          styleInformation: bigTextStyle,
-          tag: 'notification_$uniqueId', // 🔥 Her bildirim unique tag!
-          channelShowBadge: true,
-          timeoutAfter: null,
-          vibrationPattern: vibrationPattern, // 🔥 HER BİLDİRİM FARKLI TİTREŞİR!
-        ),
-      );
+      if (Platform.isIOS) {
+        // iOS için DarwinNotificationDetails
+        details = NotificationDetails(
+          iOS: DarwinNotificationDetails(
+            presentAlert: true,  // iOS 13 ve altı
+            presentBanner: true, // iOS 14+ EKRAN BANNER!
+            presentList: true,   // Notification Center
+            presentBadge: true,
+            presentSound: true,
+            sound: 'notification.caf',  // ⚠️ iOS .caf formatı!
+            badgeNumber: 1,
+            threadIdentifier: 'funbreak_vale_driver',
+            subtitle: 'FunBreak Vale Şoför',
+            interruptionLevel: InterruptionLevel.timeSensitive, // iOS 15+ öncelikli bildirim
+          ),
+        );
+        
+      } else {
+        // Android için AndroidNotificationDetails (MEVCUT SISTEM)
+        final BigTextStyleInformation bigTextStyle = BigTextStyleInformation(
+          notification.body ?? '',
+          contentTitle: notification.title,
+          htmlFormatContentTitle: true,
+          htmlFormatBigText: true,
+        );
+        
+        details = NotificationDetails(
+          android: AndroidNotificationDetails(
+            channelId,
+            channelName,
+            channelDescription: channelDesc,
+            importance: Importance.max,
+            priority: Priority.max,
+            sound: RawResourceAndroidNotificationSound(sound),
+            icon: '@mipmap/ic_launcher',
+            color: const Color(0xFFFFD700),
+            enableVibration: true,
+            playSound: true,
+            visibility: NotificationVisibility.public,
+            showWhen: true,
+            when: currentTime,
+            ticker: '${notification.title} - $uniqueId', // 🔥 Her bildirim FARKLI ticker
+            autoCancel: true,
+            onlyAlertOnce: false,
+            enableLights: true,
+            ledColor: const Color(0xFFFFD700),
+            ledOnMs: 1000,
+            ledOffMs: 500,
+            category: AndroidNotificationCategory.call,
+            groupKey: 'funbreak_driver_$uniqueId', // 🔥 Her bildirim KENDİ GRUBU!
+            setAsGroupSummary: false,
+            styleInformation: bigTextStyle,
+            tag: 'notification_$uniqueId', // 🔥 Her bildirim unique tag!
+            channelShowBadge: true,
+            timeoutAfter: null,
+            vibrationPattern: vibrationPattern, // 🔥 HER BİLDİRİM FARKLI TİTREŞİR!
+          ),
+        );
+      }
       
       // 🔥 UNIQUE ID İLE HER BİLDİRİM AYRI!
       await _localNotifications.show(
@@ -454,7 +683,6 @@ class AdvancedNotificationService {
       print('   Başlık: ${notification.title}');
       print('   Type: $notificationType');
       print('   Ses: ✅ Titreşim: ✅ LED: ✅ Importance: MAX');
-    }
   }
   
   // SÜRÜCÜ AKSİYON HANDLER

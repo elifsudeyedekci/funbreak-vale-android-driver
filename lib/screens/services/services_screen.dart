@@ -6,6 +6,8 @@ import 'dart:math' as math;
 import '../../providers/driver_ride_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../models/ride.dart';
+import '../home/driver_home_screen.dart';
+import '../settings/settings_screen.dart';
 
 class ServicesScreen extends StatefulWidget {
   const ServicesScreen({Key? key}) : super(key: key);
@@ -268,6 +270,7 @@ class _ServicesScreenState extends State<ServicesScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
+        automaticallyImplyLeading: false, // GERİ BUTONU KALDIRILDI
         title: const Text(
           'Geçmiş Yolculuklar',
           style: TextStyle(
@@ -285,6 +288,44 @@ class _ServicesScreenState extends State<ServicesScreen> {
               Icons.date_range,
               color: Color(0xFFFFD700),
             ),
+          ),
+        ],
+      ),
+      // ALT BAR
+      bottomNavigationBar: BottomNavigationBar(
+        backgroundColor: Colors.white,
+        elevation: 8,
+        currentIndex: 1, // Geçmiş Yolculuklar seçili
+        onTap: (index) {
+          if (index == 0) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const DriverHomeScreen()),
+            );
+          } else if (index == 2) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const SettingsScreen()),
+            );
+          }
+        },
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: const Color(0xFFFFD700),
+        unselectedItemColor: Colors.grey[600],
+        selectedFontSize: 12,
+        unselectedFontSize: 12,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Ana Sayfa',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.history),
+            label: 'Geçmiş Yolculuklar',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
+            label: 'Ayarlar',
           ),
         ],
       ),
@@ -578,7 +619,9 @@ class _ServicesScreenState extends State<ServicesScreen> {
     final estimatedPrice = double.tryParse(ride['estimated_price']?.toString() ?? '0') ?? 0.0;
     final finalPrice = double.tryParse(ride['final_price']?.toString() ?? '0') ?? 0.0;
     final actualPrice = finalPrice > 0 ? finalPrice : estimatedPrice;
-    final initialPrice = double.tryParse(ride['initial_estimated_price']?.toString() ?? '0') ?? estimatedPrice;
+    // ✅ Mesafe ücreti (KM bazlı) - backend'den distance_price kullan, yoksa initial_estimated_price fallback
+    final distancePrice = double.tryParse(ride['distance_price']?.toString() ?? '0') ?? 0.0;
+    final initialPrice = distancePrice > 0 ? distancePrice : (double.tryParse(ride['initial_estimated_price']?.toString() ?? '0') ?? estimatedPrice);
     final waitingMinutes = int.tryParse(ride['waiting_minutes']?.toString() ?? '0') ?? 0;
     
     // 🎁 İndirim bilgisi
@@ -649,7 +692,7 @@ class _ServicesScreenState extends State<ServicesScreen> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        'Brüt: ₺${actualPrice.toStringAsFixed(2)}',
+                        'Alınan Ücret: ₺${actualPrice.toStringAsFixed(2)}',
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -709,7 +752,7 @@ class _ServicesScreenState extends State<ServicesScreen> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  _buildInfoChip('Taban: ₺${initialPrice.toStringAsFixed(2)}'),
+                  _buildInfoChip('Mesafe Ücreti: ₺${initialPrice.toStringAsFixed(2)}'),
                   if (waitingMinutes > 0)
                     _buildInfoChip('Bekleme ${waitingMinutes}dk • ₺${waitingFeeAmount.toStringAsFixed(2)}', color: Colors.teal),
                   if (hasDiscount)
@@ -897,7 +940,9 @@ class _ServicesScreenState extends State<ServicesScreen> {
               _buildDetailSection('₺ Kazanç Detayları', () {
                 final estimatedPrice = double.tryParse(ride['estimated_price']?.toString() ?? '0') ?? 0.0;
                 final finalPrice = double.tryParse(ride['final_price']?.toString() ?? '0') ?? 0.0;
-                final initialPrice = double.tryParse(ride['initial_estimated_price']?.toString() ?? '0') ?? estimatedPrice;
+                // ✅ Mesafe ücreti (KM bazlı) - backend'den distance_price kullan
+                final distancePrice = double.tryParse(ride['distance_price']?.toString() ?? '0') ?? 0.0;
+                final initialPrice = distancePrice > 0 ? distancePrice : (double.tryParse(ride['initial_estimated_price']?.toString() ?? '0') ?? estimatedPrice);
                 final discountCode = ride['discount_code']?.toString() ?? '';
                 final discountAmount = double.tryParse(ride['discount_amount']?.toString() ?? '0') ?? 0.0;
                 final hasDiscount = discountCode.isNotEmpty && discountAmount > 0;
@@ -908,8 +953,8 @@ class _ServicesScreenState extends State<ServicesScreen> {
                 final netEarning = double.tryParse(ride['net_earning']?.toString() ?? '0') ?? (finalPrice - commission);
                 
                 List<String> items = [
-                  'Brüt Ücret: ₺${finalPrice.toStringAsFixed(2)}',
-                  'Taban (Bekleme hariç): ₺${initialPrice.toStringAsFixed(2)}',
+                  'Alınan Ücret: ₺${finalPrice.toStringAsFixed(2)}',
+                  'Mesafe Ücreti: ₺${initialPrice.toStringAsFixed(2)}',
                 ];
                 
                 if (hasDiscount) {

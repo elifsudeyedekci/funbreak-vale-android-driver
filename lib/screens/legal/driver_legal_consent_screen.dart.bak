@@ -1,0 +1,1415 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:http/http.dart' as http;
+import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'dart:io';
+
+/// SÜRÜCÜ İLK GİRİŞ SÖZLEŞME ONAY EKRANI
+/// 4 Zorunlu sözleşme onayı alınır:
+/// 1. Vale Kullanım Koşulları
+/// 2. KVKK Aydınlatma Metni
+/// 3. Özel Nitelikli Kişisel Veriler Açık Rıza
+/// 4. Açık Rıza Beyanı
+class DriverLegalConsentScreen extends StatefulWidget {
+  final int driverId;
+  final String driverName;
+  final VoidCallback onConsentsAccepted;
+
+  const DriverLegalConsentScreen({
+    Key? key,
+    required this.driverId,
+    required this.driverName,
+    required this.onConsentsAccepted,
+  }) : super(key: key);
+
+  @override
+  State<DriverLegalConsentScreen> createState() => _DriverLegalConsentScreenState();
+}
+
+class _DriverLegalConsentScreenState extends State<DriverLegalConsentScreen> {
+  bool _usageAgreementAccepted = false;
+  bool _kvkkAccepted = false;
+  bool _specialDataAccepted = false;
+  bool _openConsentAccepted = false;
+  bool _isLoading = false;
+
+  // TÜM SÖZLEŞMELER ONAYLANDI MI?
+  bool get _allConsentsAccepted =>
+      _usageAgreementAccepted &&
+      _kvkkAccepted &&
+      _specialDataAccepted &&
+      _openConsentAccepted;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1A1A2E),
+      appBar: AppBar(
+        title: const Text('Sözleşme Onayları'),
+        backgroundColor: const Color(0xFFFFD700),
+        foregroundColor: Colors.black,
+        centerTitle: true,
+        automaticallyImplyLeading: false, // Geri butonu YOK - zorunlu ekran
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // HEADER
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.gavel, color: Colors.amber, size: 48),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Hoş Geldin ${widget.driverName}!',
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Vale olarak hizmet verebilmek için aşağıdaki sözleşmeleri okumanız ve onaylamanız gerekmektedir.',
+                      style: TextStyle(color: Colors.white70, fontSize: 14),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // İLERLEME GÖSTERGES İ
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _allConsentsAccepted ? Icons.check_circle : Icons.pending,
+                      color: _allConsentsAccepted ? Colors.green : Colors.orange,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '${[_usageAgreementAccepted, _kvkkAccepted, _specialDataAccepted, _openConsentAccepted].where((e) => e).length}/4 Sözleşme Onaylandı',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // 1. VALE KULLANIM KOŞULLARI
+              _buildConsentCard(
+                title: 'Vale Kullanım Koşulları',
+                subtitle: 'FunBreak Vale platform kullanım sözleşmesi',
+                icon: Icons.drive_eta,
+                isAccepted: _usageAgreementAccepted,
+                onTap: () => _showUsageAgreementDialog(),
+                onChanged: (value) => setState(() => _usageAgreementAccepted = value ?? false),
+                isRequired: true,
+              ),
+              const SizedBox(height: 12),
+
+              // 2. KVKK AYDINLATMA METNİ
+              _buildConsentCard(
+                title: 'KVKK Aydınlatma Metni',
+                subtitle: 'Kişisel verilerin işlenmesi hakkında bilgilendirme',
+                icon: Icons.privacy_tip,
+                isAccepted: _kvkkAccepted,
+                onTap: () => _showKVKKDialog(),
+                onChanged: (value) => setState(() => _kvkkAccepted = value ?? false),
+                isRequired: true,
+              ),
+              const SizedBox(height: 12),
+
+              // 3. ÖZEL NİTELİKLİ KİŞİSEL VERİLER
+              _buildConsentCard(
+                title: 'Özel Nitelikli Veriler Rızası',
+                subtitle: 'Sağlık, adli sicil vb. özel verilerin işlenmesi',
+                icon: Icons.security,
+                isAccepted: _specialDataAccepted,
+                onTap: () => _showSpecialDataDialog(),
+                onChanged: (value) => setState(() => _specialDataAccepted = value ?? false),
+                isRequired: true,
+              ),
+              const SizedBox(height: 12),
+
+              // 4. AÇIK RIZA BEYANI
+              _buildConsentCard(
+                title: 'Açık Rıza Beyanı',
+                subtitle: 'Genel kişisel veri işleme rızası',
+                icon: Icons.verified_user,
+                isAccepted: _openConsentAccepted,
+                onTap: () => _showOpenConsentDialog(),
+                onChanged: (value) => setState(() => _openConsentAccepted = value ?? false),
+                isRequired: true,
+              ),
+              const SizedBox(height: 32),
+
+              // ONAY BUTONU
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: _allConsentsAccepted && !_isLoading
+                      ? _submitConsents
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _allConsentsAccepted
+                        ? const Color(0xFFFFD700)
+                        : Colors.grey[700],
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.black,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _allConsentsAccepted
+                                  ? Icons.check_circle
+                                  : Icons.lock,
+                              size: 24,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _allConsentsAccepted
+                                  ? 'Sözleşmeleri Onayla ve Devam Et'
+                                  : 'Tüm Sözleşmeleri Onaylayın',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // BİLGİ NOTU
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue, size: 20),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Sözleşmeleri okumak için başlıklara tıklayın. Onay verdikten sonra bu ekranı bir daha görmeyeceksiniz.',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConsentCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required bool isAccepted,
+    required VoidCallback onTap,
+    required ValueChanged<bool?> onChanged,
+    required bool isRequired,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isAccepted
+            ? Colors.green.withOpacity(0.1)
+            : Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isAccepted
+              ? Colors.green.withOpacity(0.5)
+              : Colors.white.withOpacity(0.1),
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isAccepted
+                        ? Colors.green.withOpacity(0.2)
+                        : Colors.amber.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    icon,
+                    color: isAccepted ? Colors.green : Colors.amber,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                                decoration: isAccepted
+                                    ? TextDecoration.none
+                                    : TextDecoration.underline,
+                              ),
+                            ),
+                          ),
+                          if (isRequired)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'ZORUNLU',
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Checkbox(
+                  value: isAccepted,
+                  onChanged: onChanged,
+                  activeColor: Colors.green,
+                  checkColor: Colors.white,
+                  side: BorderSide(
+                    color: isAccepted ? Colors.green : Colors.white54,
+                    width: 2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // SÖZLEŞME DİALOG'LARI
+  void _showUsageAgreementDialog() {
+    _showContractDialog(
+      title: 'Vale Kullanım Koşulları Sözleşmesi',
+      content: _getUsageAgreementText(),
+      onAccept: () => setState(() => _usageAgreementAccepted = true),
+    );
+  }
+
+  void _showKVKKDialog() {
+    _showContractDialog(
+      title: 'KVKK Aydınlatma Metni',
+      content: _getKVKKText(),
+      onAccept: () => setState(() => _kvkkAccepted = true),
+    );
+  }
+
+  void _showSpecialDataDialog() {
+    _showContractDialog(
+      title: 'Özel Nitelikli Kişisel Veriler Açık Rıza Beyanı',
+      content: _getSpecialDataText(),
+      onAccept: () => setState(() => _specialDataAccepted = true),
+    );
+  }
+
+  void _showOpenConsentDialog() {
+    _showContractDialog(
+      title: 'Açık Rıza Beyanı',
+      content: _getOpenConsentText(),
+      onAccept: () => setState(() => _openConsentAccepted = true),
+    );
+  }
+
+  void _showContractDialog({
+    required String title,
+    required String content,
+    required VoidCallback onAccept,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+            maxWidth: MediaQuery.of(context).size.width * 0.9,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // BAŞLIK
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFFD700),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.gavel, color: Colors.black),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.black),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              // İÇERİK
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    content,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+              // BUTONLAR
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(16),
+                    bottomRight: Radius.circular(16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                          side: const BorderSide(color: Colors.white30),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text('Kapat'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          onAccept();
+                          Navigator.pop(context);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFFD700),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text(
+                          'Okudum, Kabul Ediyorum',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // SÖZLEŞMELERİ ONAYLA VE KAYDET
+  Future<void> _submitConsents() async {
+    if (!_allConsentsAccepted) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      // Cihaz bilgilerini topla
+      final deviceInfo = await _collectDeviceInfo();
+      
+      // Konum bilgisi topla
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 5),
+        );
+      } catch (e) {
+        print('⚠️ Konum alınamadı: $e');
+      }
+
+      // Her sözleşme için ayrı log kaydet
+      final consents = [
+        {'type': 'vale_usage_agreement', 'text': _getUsageAgreementText(), 'summary': 'Vale Kullanım Koşulları Sözleşmesi'},
+        {'type': 'kvkk_vale', 'text': _getKVKKText(), 'summary': 'KVKK Aydınlatma Metni (Valeler İçin)'},
+        {'type': 'special_data_consent', 'text': _getSpecialDataText(), 'summary': 'Özel Nitelikli Veriler Açık Rıza'},
+        {'type': 'open_consent', 'text': _getOpenConsentText(), 'summary': 'Açık Rıza Beyanı'},
+      ];
+
+      for (var consent in consents) {
+        print('📝 VALE SÖZLEŞME LOG: ${consent['type']}');
+        
+        final response = await http.post(
+          Uri.parse('https://admin.funbreakvale.com/api/log_legal_consent.php'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'user_id': widget.driverId,
+            'user_type': 'driver',
+            'consent_type': consent['type'],
+            'consent_text': consent['text'],
+            'consent_summary': consent['summary'],
+            'consent_version': '1.0',
+            'ip_address': deviceInfo['ip_address'],
+            'user_agent': deviceInfo['user_agent'],
+            'device_fingerprint': deviceInfo['device_fingerprint'],
+            'platform': deviceInfo['platform'],
+            'os_version': deviceInfo['os_version'],
+            'app_version': deviceInfo['app_version'],
+            'device_model': deviceInfo['device_model'],
+            'device_manufacturer': deviceInfo['device_manufacturer'],
+            'latitude': position?.latitude,
+            'longitude': position?.longitude,
+            'location_accuracy': position?.accuracy,
+            'location_timestamp': position != null ? DateTime.now().toIso8601String() : null,
+            'language': 'tr',
+          }),
+        ).timeout(const Duration(seconds: 10));
+
+        final apiData = jsonDecode(response.body);
+        if (apiData['success'] == true) {
+          print('✅ Vale sözleşme ${consent['type']} loglandı - Log ID: ${apiData['log_id']}');
+        } else {
+          print('❌ Vale sözleşme ${consent['type']} log hatası: ${apiData['message']}');
+        }
+      }
+
+      // SharedPreferences'a kaydet - bir daha gösterme
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('driver_consents_accepted', true);
+      await prefs.setString('driver_consents_date', DateTime.now().toIso8601String());
+
+      print('✅ VALE SÖZLEŞMELERİ TAMAMEN ONAYLANDI!');
+
+      // Callback çağır - ana sayfaya geç
+      widget.onConsentsAccepted();
+
+    } catch (e) {
+      print('❌ Sözleşme kayıt hatası: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Bir hata oluştu: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<Map<String, dynamic>> _collectDeviceInfo() async {
+    final platform = Platform.isAndroid ? 'android' : (Platform.isIOS ? 'ios' : 'unknown');
+    final fingerprint = DateTime.now().millisecondsSinceEpoch.toString() + 
+                       '_driver_' + 
+                       widget.driverId.toString();
+    
+    return {
+      'platform': platform,
+      'os_version': Platform.operatingSystemVersion,
+      'app_version': '1.0.0',
+      'device_model': 'auto',
+      'device_manufacturer': 'auto',
+      'device_fingerprint': fingerprint,
+      'user_agent': 'FunBreak Vale App/$platform ${Platform.operatingSystemVersion}',
+      'ip_address': 'auto',
+    };
+  }
+
+  // SÖZLEŞME METİNLERİ
+  String _getUsageAgreementText() {
+    return '''FUNBREAK VALE
+VALE KULLANIM KOŞULLARI SÖZLEŞMESİ
+
+1. TARAFLAR
+
+İşbu Mobil Uygulama Kullanım Sözleşmesi (Bundan böyle "Sözleşme" olarak anılacaktır.) Armağanevler Mah. Ortanca Sk. No: 69 İç Kapı No: 22 Ümraniye/İstanbul adresinde mukim, 0388195898700001 Mersis numaralı FUNBREAK GLOBAL TEKNOLOJI LIMITED SIRKETI (Bundan böyle "FunBreak Vale" veya "Şirket" olarak anılacaktır.) ile FunBreak Vale mobil uygulaması üzerinden yolcuları taşıyan sürücü (Bundan böyle "Vale" olarak anılacaktır) arasındadır.
+
+2. SÖZLEŞMENİN AMACI VE KONUSU
+
+2.1. İşbu Sözleşme'nin konusu, yolcu için özel şoför ve vale bulma hizmetini sunan FunBreak Vale ile Vale arasındaki mobil uygulama ("Mobil Uygulama") ve web platformu kullanımına ilişkin hak ve yükümlülükleri belirtmektedir.
+
+2.2. FunBreak Vale, Yolcu ile Vale arasında aracılık hizmeti sunan bir teknoloji platformudur. FunBreak Vale, Vale ile herhangi bir işçi-işveren ilişkisi kurmamakta olup, Vale bağımsız çalışan statüsünde hizmet vermektedir.
+
+3. FUNBREAK VALE'NİN KULLANIMI VE TAAHHÜTLER
+
+3.1. Kayıt ve Kabul Koşulları
+
+3.1.1. FunBreak Vale platformu üzerinden yolcuları belirttikleri konumlara transfer ederek gelir elde etmek isteyen Vale adayları, işbu Sözleşme'yi ve FunBreak Vale'nin belirttiği şartları taşımak zorundadır.
+
+3.1.2. Vale adayları en az 21 yaşında olmalı, en az 3 yıl sürücülük deneyimine sahip olmalı ve herhangi bir sürücülük yetersizliği bulunmamalıdır.
+
+3.1.3. Şartları taşıdığını düşünen ve Sözleşme'yi uymayı taahhüt eden Vale adaylarının başvuruları FunBreak Vale'nin belirleyeceği şekilde web sayfası, mobil uygulama veya fiziki olarak alınır ve FunBreak Vale tarafından incelenir.
+
+3.1.4. Vale adayları kayıt esnasında ve FunBreak Vale tarafından belirlenecek periyodlarda aşağıdaki bilgi ve belgeleri FunBreak Vale'ye teslim etmeyi taahhüt eder:
+
+a. Kimlik Bilgisi: Vale'nin kimliğinin tespiti ve hukuki sözleşmelerin tarafı olabilmesi için T.C. Kimlik Kartı'nın veya Nüfus Cüzdanı'nın fiziki veya dijital bir nüshasının FunBreak Vale'ye teslimi gerekir.
+
+b. Ehliyet Belgesi: FunBreak Vale'de Vale'lik yapacak olan sürücülerin Yolcu'nun sahip olduğu aracı kullanabilmesi mümkün olması gerekir. B sınıfı sürücü belgesine sahip olunması ve ehliyetin herhangi bir sınırlamadan ari olması gerekir. En az 3 yıl sürücülük deneyimi bulunmalıdır.
+
+c. Sağlık Raporu: Güvenli sürüş deneyimi için sürücünün sağlığının yerinde olduğunu gösteren ve yetkili sağlık kuruluşundan alınmış güncel sağlık raporunun (son 6 ay içinde alınmış) FunBreak Vale'ye teslimi gerekir.
+
+d. Adli Sicil Kaydı: Vale'nin sürücülük yapmasını engelleyen herhangi bir hak mahkumiyeti veya ceza almamış olduğunun tespiti için e-Devlet üzerinden alınmış güncel Adli Sicil Kaydı'nın (son 3 ay içinde alınmış) FunBreak Vale'ye teslimi gerekir.
+
+e. Ceza Puanı Bilgisi: FunBreak Vale aracı platform da olsa doğru Yolcu ile doğru Vale'nin eşleşmesini önemser ve bu kapsamda ilgili transferin tüm trafik kurallarına uygun olarak gerçekleşmesini temenni eder. Bu doğrultuda e-Devlet üzerinden alınmış güncel ceza puanı bilgisinin FunBreak Vale ile paylaşılması Vale'nin seçiminde önem arz eder. Ceza puanı 70 ve üzerinde olan Vale adayları kabul edilmez.
+
+f. Ödeme Bilgisi (IBAN): FunBreak Vale, Yolcu ile Vale arasındaki mali konulara da aracılık ettiği için Vale'nin gelen ödemeleri teslim alabilmesi için güncel, doğru ve hak mahremiyeti olmayan T.C. kimlik numarasına kayıtlı IBAN bilgisinin FunBreak Vale'ye teslimi gerekir. IBAN bilgisi Vale'nin şahsına ait olmalıdır.
+
+g. İkametgah Belgesi: Vale'nin ikametgah adresinin tespiti için e-Devlet üzerinden alınmış güncel İkametgah Belgesi'nin (son 3 ay içinde alınmış) FunBreak Vale'ye sunulması gerekir.
+
+h. Referans Bilgisi: Vale adayının daha önceki çalışma tecrübelerine dair referans kişi bilgileri (ad-soyad, telefon) FunBreak Vale tarafından talep edilebilir.
+
+3.1.5. Vale, kayıt esnasında verdiği tüm bilgi ve belgelerin doğru, eksiksiz, güncel ve kendisine ait olduğunu kabul, beyan ve taahhüt eder. Sahte, yanıltıcı veya eksik bilgi verilmesi durumunda FunBreak Vale hiçbir gerekçe göstermeksizin başvuruyu reddedebilir veya mevcut hesabı kapatabilir.
+
+3.2. Başvurunun Kabul Edilmesi
+
+3.2.1. Vale adayının başvurusunun kabulü tamamen FunBreak Vale'nin takdirindedir. Vale ve Vale adayları, kayıt formunu doldururken şahsi bilgileri hakkında doğru, kesin, güncel bilgiler vereceklerini kabul, beyan ve taahhüt eder. FunBreak Vale, kendisine iletilen bilgilerin eksik/yanlış olduğunu tespit ederse kaydı kabul etmeyebilir, dondurabilir veya silebilir.
+
+3.2.2. FunBreak Vale'nin başvuruyu kabul etmesi, Vale ile FunBreak Vale arasında işçi-işveren, ücretli çalışan-işveren veya benzeri bir hukuki ilişki doğurmayacak, FunBreak Vale sadece uygulamanın platformlarını kullanma izni vermektedir. FunBreak Vale'nin ilgili sürücüyü Vale olarak kabul etmesi, Vale'nin FunBreak Vale'nin hukuki veya cezai sorumluluğunu doğurmayacağını, tüm sorumluluğun Vale'de olacağını kabul, beyan ve taahhüt etmeleridir.
+
+3.2.3. Vale adayının, FunBreak Vale tarafından başvurusunun kabul edilmesi, bu kaydın hiçbir şekilde silinmeyeceği sonucu doğurmaz. Vale sözleşme hükümlerine, FunBreak Vale'nin belirttiği koşullara ve mevcut mevzuata uygun hareket etmekle yükümlüdür. Aksi durumda FunBreak Vale herhangi bir gerekçe ve süre sınırlaması olmadan Vale'nin hesabını veya kaydını dondurabilir, sıfırlayabilir veya silebilir. Vale veya Vale adayının herhangi bir talebi olamayacağı gibi hesaplarında biriken tutarlara dair de bir talepleri olamaz.
+
+3.3. Vale Profili ve Şartları
+
+3.3.1. İşbu Sözleşme'nin tarafı olan Vale, FunBreak Vale ve üçüncü taraf web sayfalarındaki şifre ve hesap güvenliğinden kendisi sorumlu olduğunu kabul, beyan ve taahhüt eder. Aksi halde oluşacak veri kayıplarından ve güvenlik ihlallerinden veya donanım ve cihazların zarar görmesinden FunBreak Vale sorumlu tutulamaz.
+
+3.3.2. Vale, kullanıcı adı ve kullanıcı şifrelerinin yetkili olmayan kişiler tarafından kullanılmasını veya yetki verdiği kişilerin bunları yetkilerini aşacak şekilde kullanmalarını önlemek ve gerekli denetimleri yapmakla yükümlüdür. Vale, oluşturduğu kullanıcı adı ve şifresini üçüncü kişiler ile paylaşmayacağını; kullanıcı adı ve şifrenin seçimi, gizliliği ve korunmasının tamamen kendi sorumluluğunda olduğunu; FunBreak Vale'nin kullanıcı adı ve şifre kullanımından doğacak problemlerden kesinlikle sorumlu olmadığını kabul, beyan ve taahhüt eder.
+
+3.3.3. Vale, kendisinden kaynaklı vermiş olduğu kişisel bilgileri ile FunBreak Vale'ye giriş ve bağlantı ile kullanılan kayıt ve bilgilerin, bunlara ait verilerin FunBreak Vale tarafından saklanmasını, işlenmesini, depolanmasını, silinmesini, kayıt altına alınmasını, kontrol edilmesini kabul etmektedir.
+
+3.3.4. Vale, kendilerine ait iletişim bilgileri ve sair verilerin FunBreak Vale ve/veya bağlantılı kurum, kuruluş ve kişiler tarafından başkaca hizmet veya çalışmalar veya ticari amaçlı faaliyetler için tekrar izin almaksızın veya kendisine bildirim yapılmaksızın kullanılabileceğini ve bunun için FunBreak Vale'ye veya kullanımı gerçekleştirecek kişilerin hiçbir talepte bulunmayacağını kabul, beyan ve taahhüt etmektedir.
+
+3.3.5. FunBreak Vale'de, Vale'ye ait kullanıcı adı, kullanıcı şifresi ile yapılan her işlem ve her eylem işbu Sözleşme'nin tarafı olan Vale tarafından yapılmış sayılır. FunBreak Vale'de işbu Sözleşme'nin tarafı olan Vale tarafından yapılan veya yapıldığı var sayılan her bir işlem, komut, bilgi girişi ve her türlü elektronik müdahale işbu Sözleşme'nin tarafı olan Vale'ye ait bir irade açıklaması olarak geçerli sayılır ve buna ilişkin hukuki sonuçları doğurur.
+
+3.3.6. Vale, FunBreak Vale'nin kullanımında tersine mühendislik yapmayacağını ya da bunların kaynak kodunu bulmak veya elde etmek amacına yönelik herhangi bir başka işleme bulunmayacağını, aksi halde FunBreak Vale, Yolcu ve 3. kişiler nezdinde doğacak zararlardan sorumlu olacağını, hakkında hukuki ve cezai işlem yapılacağını peşinen kabul eder.
+
+3.3.7. Vale, FunBreak Vale'nin yazılı veya elektronik ortamlarda gönderilebilecek onayı olmadan işbu Sözleşme'yi veya bu Sözleşme kapsamında hak ve yükümlülüklerini, üye profillerini, üye bilgilerini kısmen veya tamamen başka bir üçüncü kişiye veya işbu Sözleşme'nin tarafı olan Vale'ye devredemez; üyeliğini kendisinden başka kişilerin kullanımına açamaz. Üyeliğinin iptali halinde ve üyeliğin dondurulması durumunun kendi talebinden kaynaklanması, işbu sürecin tümüyle hesabının kapatıldığını göstermez.
+
+3.3.8. FunBreak Vale, Vale veya Vale adayı tarafından verilen belgeler ve bilgilerin gerçek, doğru ve güncel olmadığını tespit ederse FunBreak Vale, Vale'nin uygulamaya giriş yapmasını yasaklayabilir ve yasal haklarını saklı tutar.
+
+3.3.9. Vale, aynı anda birden fazla cihazdan oturum açması durumunda FunBreak Vale'nin güvenlik politikası gereği eski oturumları sonlandırma hakkına sahip olduğunu kabul eder. Her cihaz için benzersiz cihaz kimliği (Device ID) oluşturulur ve kayıt altına alınır.
+
+4. VALE'NİN YÜKÜMLÜLÜKLERİ
+
+4.1. FunBreak Vale'ye İlişkin Yükümlülükler
+
+Vale, aşağıdaki hususları kabul, beyan ve taahhüt eder:
+
+4.1.1. FunBreak Vale'yi aktif bir şekilde kullanmayı, ulaşılabilir ve erişilebilir olmayı,
+
+4.1.2. Kendisine gönderilen transfer taleplerini makul süre içerisinde değerlendirmeyi ve kabul ettiği transferleri mücbir sebepler haricinde gerçekleştirmeyi,
+
+4.1.3. Transfer talebinin kabul edilmesi halinde en kısa zamanda Yolcu ile iletişime geçmeyi, süreç hakkında Yolcu'yu bilgilendirmeyi,
+
+4.1.4. Yolcu'nun alım noktasına belirlenen zamanda varmayı (rezervasyonlarda) veya en kısa sürede varmayı (anında valelerde),
+
+4.1.5. Transfer aşamasında asla kendi aracını kullanmamayı, bu durumun mevcut hizmetin hukuki statüsünü değiştireceğini ve hizmetin Vale tarafından asla kabul edilmeyeceğini. Vale, Yolcu'nun aracını kullanarak hizmeti yerine getirecektir,
+
+4.1.6. Transfer işlemini bizzat kendisi gerçekleştirmeyi, başka bir sürücüye devretmemeyi,
+
+4.1.7. Yolcu'nun alımında ve transfer noktasına aktarımında FunBreak Vale'yi sistemde güncel konum ile bilgilendirmeyi (GPS takibi aktif olacak),
+
+4.1.8. FunBreak Vale tarafından belirlenen ücret tarifeleri dışında herhangi bir ücret talep etmemeyi veya bildirimde bulunmamayı,
+
+4.1.9. FunBreak Vale tarafından alınan konumun yanlış olabileceğini ve bu kapsamda gerçek konumun FunBreak Vale sistemi ile sürekli olarak paylaşmayı (otomatik GPS tracking),
+
+4.1.10. Yolculuk süresince rota takibinin (route tracking) ve bekleme noktalarının (waiting points) otomatik olarak kaydedileceğini ve bu bilgilerin Yolcu, FunBreak Vale ve gerekirse yetkili mercilerle paylaşılabileceğini,
+
+4.1.11. Bekleme işlemini başlatırken sistemde "Bekleme Başlat" butonuna basarak süreci kayıt altına almayı, bekleme süresince araç ile hareket etmemeyi, bekleme bittiğinde "Bekleme Durdur" butonuna basmayı,
+
+4.1.12. Yolculuk tamamlandığında sistem üzerinden "Yolculuğu Tamamla" butonuna basarak bırakma konumunu (dropoff location) kaydetmeyi,
+
+4.1.13. Mobil uygulamanın her zaman güncel versiyonunu kullanmayı, güncelleme bildirimleri geldiğinde en kısa sürede uygulamayı güncellemeyi.
+
+4.2. Yolcu'ya Karşı Yükümlülükler
+
+Vale, aşağıdaki hususları kabul, beyan ve taahhüt eder:
+
+4.2.1. Yolcu ile FunBreak Vale'de belirlenen zamanda buluşmayı ve hedeflenen süre içerisinde hedeflenen konuma transfer etmeyi,
+
+4.2.2. Transfer süresinde Yolcu'yu rahatsız edecek davranışlardan kaçınmayı, Yolcu'nun alkolü, yorgun veya kötü durumda olma ihtimaline karşı gerekli sabrı ve hassasiyeti göstermeyi,
+
+4.2.3. Yolcu'ya karşı eylemlerinin suç unsuru oluşturmayacağını, kamuya açıklanamayacağını ve uygulamada olan herhangi bir yasayı çiğnemeyeceğini,
+
+4.2.4. Yolcu'nun mahremiyet hakkına tecavüz edici, yanlış, yanıltıcı, onur kırıcı, iftira atıcı, leke sürücü, müstehcen, kaba ya da saldırgan girişimde bulunmayacağını,
+
+4.2.5. Yolcu ile sistemdeki mesajlaşma özelliğini kullanarak iletişim kurmayı, kişisel telefon numarasını paylaşmamayı (köprü arama sistemi üzerinden arama yapılacak),
+
+4.2.6. Yolcu'nun aracına özen göstermeyi, araç içinde sigara içmemeyi, yeme-içme yapmamayı, aracı kirletmemeyi,
+
+4.2.7. Trafik kurallarına tam olarak uymayı, hız sınırlarını aşmamayı, güvenli sürüş yapmayı,
+
+4.2.8. Yolcu'nun özel eşyalarına dokunmamayı, izinsiz müdahalede bulunmamayı.
+
+4.3. Kaza Sorumluluğu
+
+4.3.1. Vale'nin transfer sürecinde kendi kusurundan dolayı kaza yapması halinde sorumluluğun Vale'de olduğunu, FunBreak Vale'nin herhangi bir sorumluluğunun bulunmadığını kabul eder.
+
+4.3.2. Vale'den kaynaklı olmayan nedenlerle (üçüncü kişi kusuru, mücbir sebep vb.) kaza olması durumunda Vale'nin kazaya ilişkin sorumluluktan kaçınabileceğini, ancak ilgili kazanın FunBreak Vale ile ilişkilendirilmeyeceğini Vale tarafından kabul edilmiştir.
+
+4.3.3. Vale, kaza anında derhal FunBreak Vale'yi ve Yolcu'yu bilgilendirmeyi, gerekli yasal prosedürleri (trafik polisi, ambulans vb.) yerine getirmeyi taahhüt eder.
+
+4.3.4. Kaza sonrası Vale, kaza tutanağını ve ilgili belgeleri FunBreak Vale ile paylaşmayı kabul eder.
+
+4.4. Ceza Sorumluluğu
+
+4.4.1. Vale, trafik cezaları konusunda, cezai soruşturma gerektiren hususlarda, Vale'nin Yolcu'ya veya Yolcu'nun Vale'ye karşı davranışlarında, Vale'nin veya Yolcu'nun yasaklı madde, göçmen kaçakçılığı veya benzeri suç konularına karışması durumunda ve herhangi bir işleme ilişkin olarak aracılık hizmeti sağlayıcı olması kapsamında FunBreak Vale'nin herhangi bir sorumluluğu olmadığını ve FunBreak Vale'ye karşı hiçbir hak ve tazmin talebinde bulunmayacağını kabul, beyan ve taahhüt eder.
+
+4.4.2. Transfer sırasında alınan trafik cezaları, Vale'nin sürüş esnasında oluşmuşsa Vale'nin sorumluluğundadır ve ceza bedelini ödemeyi taahhüt eder.
+
+5. VALE'NİN HAK VE YÜKÜMLÜLÜKLERİ
+
+5.1. Vale, mobil uygulamada yer alan tüm sözleşme hükümlerine uygun hareket edeceğini, FunBreak Vale tarafından belirlenen usule uyacağını kabul, beyan ve taahhüt eder.
+
+5.2. Vale, yetkisi dışında bulunan veya yerine getirme gücü olmayan işlemlere tevessül etmeyeceğini, bu tür teklif ve kabullerde bulunmayacağını ve yaptığı her işlemde dürüst, iyi niyetli ve tedbirli davranacağını, sistemi kullanırken, sistemin işleyişini engelleyici veya zorlaştırıcı şekilde davranmayacağını kabul, beyan ve taahhüt eder.
+
+5.3. FunBreak Vale'ye kayıt olan Vale, işbu Sözleşme'de belirtilen veya güncel uygulama protokolü ile FunBreak Vale tarafından düzenlenecek genel, mobil uygulamaya özgü olan ücret ve ödeme politikasını, dönemsel kampanyaları ve komisyon oranlarını, ücret ve ödeme politikasına karşı itirazda bulunmayacaklarını ve buna bir itiraz konusu halinde getirmeyeceklerini, getirilmesi durumunda 100.000,00 TL tutarında cezai şart ödemeyi peşinen kabul, beyan ve taahhüt eder.
+
+5.4. Vale, beklenmeyen hizmet kesintilerinden, planlara uyulamamasından, değerlendirmelerde yetkisiz erişim veya ifşasından, değerlendirmelerin bütünlüğünün bozulmasından veya benzeri durumlardan dolayı doğrudan ve dolaylı zararlardan sorumludur.
+
+5.5. Vale, FunBreak Vale içindeki faaliyetlerinde, FunBreak Vale'nin herhangi bir bilgilendirme veya işlemlerinde yer almayacak ve itibarına aykırı, 3. kişilerin haklarını zedeleyen, ahlaka aykırı, saldırgan, müstehcen, pornografik, kişilik haklarını zedeleyen faaliyetlerde bulunmayacaklarını kabul eder. Aksi halde oluşacak zarardan sorumlu olan Vale'nin hesapları geçici olarak askıya alınabilir, sona erdirilebilir, yasal süreç başlatılabilir.
+
+5.6. İşbu Sözleşme'nin tarafı olan Vale, işbu Sözleşme'den doğan yükümlülüklerini ihlal etmesi veya işbu sözleşme hükümlerine aykırı hareket etmesi durumunda, FunBreak Vale'nin, Yolcu'nun veya üçüncü kişilerin doğan zararlarını doğrudan karşılamaktan sorumludur.
+
+5.7. Vale, müşteri memnuniyeti için minimum 3.5 yıldız puanı korumayı taahhüt eder. Puan ortalaması sürekli olarak 3.5'in altına düşerse FunBreak Vale, Vale ile olan iş akdine son verme hakkını saklı tutar.
+
+5.8. Vale, yolculuk tamamlandıktan sonra sistem üzerinden hesaplanan ücretten %30 ücret kesintisi yapılacağını, kalan tutarın haftalık dönemlerde kendisine ödeneceğini kabul eder. Ödemeler her Pazartesi günü, bir önceki hafta (Pazartesi-Pazar) tamamlanan yolculuklar için Vale'nin kayıtlı IBAN'ına havale edilir.
+
+6. FUNBREAK VALE'NİN HAK VE YÜKÜMLÜLÜKLERİ
+
+6.1. FunBreak Vale, işbu Sözleşme'nin tarafı olan Vale'nin başvurularını reddetme hakkını saklı tutacağı gibi, herhangi bir sebeple Vale'nin daha sonrasında hesabını durdurma veya silme hakkını da saklı tutmaktadır.
+
+6.2. FunBreak Vale, Vale'nin denetimini yapmakla sorumlu olmasa da Vale'nin siparişlerini onaylamamakta veya iptal etmekte serbesttir.
+
+6.3. FunBreak Vale, web sayfasında ve mobil uygulamasında bulunan yazılı, görsel veya videolu içeriklerin hak sahibidir. Bu haklardan yararlananın belli bir süre için Vale ve/veya Yolcu olması halinde ilgili içerikler üzerinde hak iddia edemeyeceği gibi Vale veya Yolcu, FSEK ve SMK kapsamında sorumludur.
+
+6.4. FunBreak Vale, web sayfasını veya mobil uygulamanın kullanım alanlarını, teknik özelliklerini, yapısını, konseptini, içeriğini değiştirebilir. Teknik kaynaklanan sorunlar, hacking saldırıları veya zorunlu sebeplerden dolayı da FunBreak Vale mesul tutulamaz. Vale'den veya Yolcu'dan ek bilgi ve belgeler talep edebilir, web sayfası ve/veya mobil uygulamasını iptal edebilir, işletmesini askıya alabilir.
+
+6.5. FunBreak Vale veya FunBreak Vale'nin vermiş olduğu hizmetlerle bağlantılı iştirakleri veya uygulamaları ve altyapıları üzerinde her tür kullanım ve tasarruf yetkisi FunBreak Vale'ye aittir. FunBreak Vale, Sözleşme şartları da dahil olmak üzere, mobil uygulamasında mevcut her tür koşulu ve bilgiyi önceden herhangi bir ihtara gerek olmaksızın değiştirme hakkını saklı tutar.
+
+6.6. FunBreak Vale, Vale'lerin performansını izleme, değerlendirme ve raporlama hakkına sahiptir. Bu kapsamda yolculuk süresi, mesafe, müşteri puanları, iptal oranları vb. metrikler takip edilebilir.
+
+6.7. FunBreak Vale, platformda güvenlik ve kalite standartlarını korumak amacıyla Vale'lerin yolculuklarını rastgele veya şüpheli durumlarda inceleme hakkına sahiptir.
+
+7. GİZLİLİK VE REKABET YASAĞI
+
+7.1. İşbu Sözleşme'de açıkça aksi belirtilen haller hariç olmak üzere, Vale işbu Sözleşme çerçevesinde öğrendikleri gizli bilgileri, verileri veya belgeleri bunlara ait tüm bilgileri, verileri ve belgeleri, fikri ve sınai hakları, varlıkları ve sair her türlü maddi ve manevi nitelikte varlıkları, FunBreak Vale'nin yazılı izni olmadan üçüncü kişilere açıklayamaz, paylaşamaz ve ifşa edemez.
+
+7.2. İşbu Sözleşme bağlamında, "Gizli Bilgiler"; FunBreak Vale'nin, FunBreak Vale'nin iştirakleri, yöneticileri, yetkilileri, çalışanları ve profesyonel danışmanları ve Yolcu veya Vale'ye herhangi bir sözlü, yazılı, manyetik, elektronik, dijital veya sair şekillerde iletilen tüm bilgi ve belgeleri olarak FunBreak Vale veya adına ifşa edilecek olan tüm iş, ticari, teknolojik, ekonomik, teknik, mali, hukuki, teknolojik, pazarlama ve/veya görsel bilgiler; markalar, modeller, hizmetler, planlar, operasyonlar, işletmeler, müşteri bilgileri, kampanya stratejileri, şirket stratejileri, müşteri raporları, notlar, analizler, değerlendirmeler, fizibilite ve bilirkişi raporları, özetler, çalışmalar ve bunlara ilişkin sunduğu tüm bilgiler ve sair dokümanlardır.
+
+7.3. Vale, telif hakları konusunda tek sahipliğin FunBreak Vale olduğunu kabul, beyan ve taahhüt eder. Vale işbu Sözleşme'ye taraf olmayı ve Sözleşme'den kaynaklanan borçlarını ifaya hukuken yetkili olduğunu, FunBreak Vale'ye verdiği tüm bilgi ve belgelerin yanlışlığından sorumlu olduğunu kabul eder.
+
+7.4. Vale, FunBreak Vale sistemi üzerinden edindiği Yolcu iletişim bilgilerini (telefon, e-posta vb.) sistem dışında kullanmayacağını, Yolcu'yu doğrudan veya dolaylı olarak başka bir platforma veya hizmete yönlendirmeyeceğini kabul eder.
+
+7.5. Vale, FunBreak Vale ile rekabet edecek şekilde benzer bir platform kurma veya benzer hizmetler sunma faaliyetinde bulunmayacağını, bu Sözleşme'nin yürürlükte olduğu süre ve sona ermesinden sonraki 2 (iki) yıl boyunca FunBreak Vale ile doğrudan rekabet eden bir platformda çalışmayacağını kabul eder.
+
+8. KİŞİSEL VERİLERİN KORUNMASI
+
+8.1. Vale, kayıt esnasında kabul ettikleri FunBreak Vale'de yer alan Kişisel Verilerin Korunması ve İşlenmesi Politikası ve KVKK Aydınlatma Metni kapsamında Kişisel Verilerinin; Türkiye Cumhuriyeti Anayasası, ülkemizin taraf olduğu uluslararası sözleşmeler ve 6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") başta olmak üzere, Kişisel Verilerin korunması ile ilgili tüm mevzuatın öngördüğü sınırlar çerçevesinde, KVKK'nın 4. maddesinde yer alan:
+
+a) Hukuka ve dürüstlük kurallarına uygun olma,
+b) Doğru ve gerektiğinde güncel olma,
+c) Belirli, açık ve meşru amaçlar için işlenme,
+d) İşleme amaçlarıyla bağlantılı, sınırlı ve ölçülü olma,
+e) İlgili mevzuatta öngörülen veya işlendikleri amaç için gerekli olan süre kadar muhafaza edilme
+
+ilkelerine uygun olarak toplanabileceğini ve işleyebileceğini kabul eder.
+
+8.2. FunBreak Vale, detaylı hazırlamış olduğu Kişisel Verilerin Korunması ve İşlenmesi Politikası ve KVKK Aydınlatma Metni kapsamında KVKK'ya tam uyumluluğu amaçlamakta ve işleri gereği Vale ile Yolcu uygulamalarında yer alan kişisel verilerin tamamının Vale tarafından korunması gerekmektedir. İşbu Sözleşme'nin tarafı olan Vale, kişisel verilerin korunması ve işlendiği Kişisel Veriler Kanunu kapsamında hakikate dayanan bilgileri ve hukuki yükümlülükleri nedeniyle ilgili düzenlemelere uyacağını kabul ve taahhüt eder. Vale, bu yükümlülüklerini yerine getirmemesi halinde mevzuat, yürürlükteki düzenlemeler, Yolcu'nun veya üçüncü kişilerin uğrayacağı zararlardan sorumlu olacağını kabul eder.
+
+8.3. Kayıt sırasında Vale'nin FunBreak Vale'ye vermiş olduğu veriler, 6698 Sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") çerçevesince hazırlanan kişisel verilerin korunması ve işlenmesi politikası kapsamında işlenir ve bu veriler; kimlik bilgileri, iletişim bilgileri, lokasyon, adres, fotoğraf, grafik, ses kayıtları vb. den oluşur. Bilgilerin sorumluluğu Vale'ye aittir. FunBreak Vale bilgilerin online dağıtımında rol oynar. Yargı mercilerinden Vale'nin hesapları ile ilgili bilgi talepleri gelirse paylaşma hakkını saklı tutar. FunBreak Vale, Vale'ye ait kişisel verilerin Yolcu'ya aktarılmasından veya Yolcu'ya aktarıldıktan sonra KVKK'ya aykırı olabilecek fiillerden sorumlu değildir.
+
+8.4. Vale'nin paylaşmış olduğu bütün veriler Kişisel Veriler Politikası ve sair düzenlemeler kapsamında değerlendirilir. Bu kapsamda Vale'nin FunBreak Vale ile paylaştığı verilerin içerik, biçim ve açık bir şekilde rıza verdiği kabul olunur. FunBreak Vale'nin bu hususta sorumluluğu olmayacağını peşinen kabul eder. Verilerin FunBreak Vale veya Yolcu'ya veya Vale'ye aktarılması ile kısmen veya tamamen yok edilmesinde ilgili takdirde FunBreak Vale, veri sorumlusudur ve gerekli bilgileri temin veya güncelleyerek sunacaktır.
+
+8.5. Vale işbu Sözleşme'de ve FunBreak Vale'de belirtilen görevli sözleşmeler kapsamında olarak 6698 Sayılı Kişisel Verilerin Korunması Kanunu hükümlerine uygun hareket edeceğini, ilgili kişisel veriler veya bilgileri üçüncü kişilere dağıtmayacağını, yetkisiz erişim, yetkisiz bilgi ifşa yapmayacağını, Raporlara yetkisiz erişim veya ifşalarda bulunmayacağını, programın bütünlüğünün bozulmasına veya erişilebilirliğinin bozulmasına sebebiyet vermeyeceğini, aksi durumda FunBreak Vale'nin veya Yolcu'nun uğrayacağı tüm doğrudan veya dolaylı zararları tazmin etmeyi kabul beyan ve taahhüt eder.
+
+8.6. Vale, yolculuk sırasında kaydedilen GPS konum bilgilerinin, rota takip verilerinin (route tracking), bekleme noktası bilgilerinin (waiting points) ve bırakma konum bilgilerinin (dropoff location) FunBreak Vale tarafından saklanacağını, bu verilerin hizmet kalitesi, güvenlik ve yasal yükümlülükler çerçevesinde işlenebileceğini kabul eder.
+
+9. SÖZLEŞMENİN SÜRESİ VE FESİH HAKKI
+
+9.1. İşbu Sözleşme süresiz olarak düzenlenmiştir. FunBreak Vale e-posta yoluyla veya yazılı bir bildirimde bulunarak ve bir süre tayinine gerek olmaksızın önceden bildirmeksizin istediği zaman sözleşmeyi fesih hakkına sahiptir.
+
+9.2. Vale, üyeliğini tek taraflı olarak iptal etse veya üyeliği FunBreak Vale tarafından durdurulsa/askıya alınsa/sonlandırılsa dahi, bu iptal işleminden önce, üyeliği sırasında gerçekleştirdiği eylemlerinden, borçlarından gerek FunBreak Vale'ye gerekse diğer üçüncü kişi, kurum ve kuruluşlara karşı şahsen sorumlu olacaktır.
+
+9.3. Üyeliğini iptal eden veya 30 (otuz) gün boyunca FunBreak Vale'ye giriş yapmayan ve işbu sözleşmedeki yükümlülükleri yerine getiremeyen Vale tüm haklarından feragat etmiş sayılır.
+
+9.4. Vale'nin Sözleşme kapsamındaki yükümlülüklerinden herhangi birinin ihlali sözleşmenin haklı sebeple feshini gerektiren ağır ihlal sebeplerinden olup, Sözleşme'nin haklı bir nedenle ve derhal FunBreak Vale tarafından feshi ile sonuçlanabilir. Vale bu hususları kabul, beyan ve taahhüt eder. Kendisine gelecek cezai şart talebinin tebliğinden itibaren 5 (beş) iş günü içerisinde FunBreak Vale'ye ödeme yapmakla yükümlüdür.
+
+9.5. Vale, üyeliği iptal etmeden önce sistemde bekleyen ödemelerini talep edebilir. FunBreak Vale, iptalden önce tamamlanmış yolculuklara ait ödemeleri yapmayı taahhüt eder.
+
+9.6. Vale, aşağıdaki durumlarda FunBreak Vale tarafından derhal ve tek taraflı olarak sözleşme feshedilerek hesabı kapatılabilir:
+a) Sahte belge sunması,
+b) Yolcu'ya karşı suç teşkil eden bir eylemde bulunması,
+c) Sürekli olarak 3.5 yıldızın altında puan alması,
+d) Mükerrer şikayet alması,
+e) Trafik kazası veya ciddi ihlal yapması,
+f) Alkollü veya uyuşturucu etkisi altında hizmet vermesi,
+g) Gizlilik kurallarını ihlal etmesi,
+h) Rekabet yasağına aykırı davranması.
+
+10. İPTAL VE İADE POLİTİKASI
+
+10.1. Vale Tarafından İptal:
+Vale, kabul ettiği bir yolculuğu iptal etmek zorunda kalırsa (mücbir sebep hariç) herhangi bir ücret tahsil edemez ve FunBreak Vale sistem üzerinde uyarı kaydı oluşturabilir. Mükerrer iptaller hesabın askıya alınmasına sebep olabilir.
+
+10.2. Yolcu Tarafından İptal:
+Yolcu'nun iptal ettiği yolculuklarda Vale'ye herhangi bir ücret ödenmez. Ancak Yolcu'nun belirli koşullarda iptal ücreti ödemesi gerekebilir:
+• 45 dakika veya daha fazla kala iptal: Ücretsiz iptal. Vale'ye ödeme yapılmaz.
+• 45 dakikadan az kala iptal: Yolcu 1.500,00 TL iptal ücreti öder. Bu ücretin %70'i Vale'ye aktarılır, %30'u FunBreak Vale komisyonu olarak kalır.
+
+10.3. Mücbir Sebepler:
+Mücbir sebep (ciddi hastalık, kaza, doğal afet vb.) halinde Vale iptal yapabilir ve herhangi bir yaptırıma tabi tutulmaz. Ancak mücbir sebebin belgelendirilmesi gerekir.
+
+11. ÜCRET VE ÖDEME SİSTEMİ
+
+11.1. Ücretlendirme Sistemi:
+FunBreak Vale, mesafe bazlı sabit fiyatlandırma (distance pricing) sistemi kullanır. Yolculuk ücreti, gidilen mesafeye göre aşağıdaki sabit tarifelerden hesaplanır:
+• 0-5 km: 1.500,00 TL
+• 5-10 km: 1.700,00 TL
+• 10-15 km: 1.900,00 TL
+• 15-20 km: 2.100,00 TL
+• 20-25 km: 2.300,00 TL
+• 25-30 km: 2.500,00 TL
+• 30-35 km: 2.700,00 TL
+• 35-40 km: 2.900,00 TL
+
+Bu tarifeler FunBreak Vale tarafından güncellenebilir.
+
+11.2. Bekleme Ücreti:
+İlk 15 dakika bekleme ücretsizdir. 15 dakikadan sonra her 15 dakika veya kesri için 200,00 TL bekleme ücreti uygulanır. Bekleme süresi, Vale'nin sistemde "Bekleme Başlat" butonuna basmasıyla başlar ve "Bekleme Durdur" ile sona erer. Bekleme sırasında Vale araç ile hareket edemez.
+
+11.3. Saatlik Paket Sistemi:
+Normal vale yolculuğu 2 (iki) saat geçerse otomatik olarak saatlik pakete dönüşür. Saatlik paket fiyatları:
+• 0-4 saat: 3.000,00 TL
+• 4-8 saat: 4.500,00 TL
+• 8-12 saat: 6.000,00 TL
+
+Saatlik pakette bekleme ücreti uygulanmaz.
+
+11.4. Komisyon:
+Tüm yolculuklardan %30 komisyon FunBreak Vale tarafından kesilir. Vale, yolculuk ücretinin %70'ini alır.
+Örnek: 7 km yolculuk → 1.700,00 TL → FunBreak Vale komisyonu: 510,00 TL → Vale'ye ödeme: 1.190,00 TL
+
+11.5. Ödeme Dönemi:
+Ödemeler haftalık olarak yapılır. Her Pazartesi günü, bir önceki hafta (Pazartesi-Pazar) tamamlanan yolculukların ödemesi Vale'nin kayıtlı IBAN'ına havale edilir.
+
+11.6. Ödeme Yöntemi:
+Yolcu, kart veya havale ile ödeme yapar. FunBreak Vale, Yolcu'dan tahsil ettiği ödemeyi komisyon kesintisi yaparak Vale'ye aktarır.
+
+11.7. Fatura:
+Vale, fatura kesme yükümlülüğü varsa FunBreak Vale'ye fatura kesmekle yükümlüdür. Gelir vergisi ve diğer yasal yükümlülükler Vale'ye aittir.
+
+11.8. İndirim Kodları:
+Yolcu'nun kullandığı indirim kodları nedeniyle oluşan fiyat farklarından Vale'nin komisyonu etkilenir. İndirim tutarı ödenmesi gereken tutardan düştükten sonra kalan ücret üzerinden hesaplama yapılır.
+
+12. MÜCBİR SEBEPLER VE SORUMSUZLUK BEYANLARI
+
+12.1. FunBreak Vale'nin kontrolü ve iradesi dışında gelişen ve makul denetim gücü dışında kalan ve Taraflar'ın işbu Sözleşme ile yükümlü olduğu borçlarını yerine getirmelerini engelleyici ve/veya geciktirici önceden tahmini edilmesi mümkün olmayan, sayılanlarla sınırlı olmamak kaydı ile; hizmeti sağlamada aracı olan kişinin sağlık probleminin ortaya çıkması, hastalanması, kaza yapması, iletişim kanallarına ulaşılamaması, iletişim cihazlarına dair hırsızlık faaliyeti nedeniyle hizmet edememe gibi savaş, iç savaş, terör eylemleri, deprem, yangın, sel benzeri tabii afetlerin meydana gelmesi, yazılımda meydana gelen hatalar, siber saldırılar ve hacking saldırıları, server çökmesi gibi işbu maddede belirtilen mücbir sebeplerin Vale'de ve FunBreak Vale'de meydana gelmesi mücbir sebep olarak değerlendirilecektir.
+
+12.2. FunBreak Vale, mücbir sebep yüzünden yükümlülüklerini tam veya zamanında yerine getirememekten dolayı sorumlu tutulmayacaktır. FunBreak Vale'nin mücbir neden çıkması halinde kendisinden önce tahakkuk eden hak ve alacakları saklı kalacaktır.
+
+12.3. Vale'nin internet bağlantısında meydana gelecek olan sorunlar ve transfer veya sipariş işlemlerinden dolayı oluşabilecek kayıp, zarar, iddia veya ihmallar;
+a) FunBreak Vale'nin kontrolü dışındaki sebeplerden dolayı teknik problemlerin yaşanması;
+b) İnternet altyapılarının Vale veya Yolcu'nun siteye giremeyecek şekilde sorun yaşaması;
+c) FunBreak Vale tarafından uygulamanın işleyişinin geçici olarak ya da tamamen durdurulması, işlevde değişiklikler yapılması durumları ile sınırlı kalmaksızın oluşabilecek her türlü kayıp için FunBreak Vale'nin herhangi bir sorumluluğu ya da yükümlülüğü olmadığını beyan, kabul ve taahhüt eder.
+
+12.4. Vale, FunBreak Vale'den mücbir sebeplere göre veya herhangi bir nedenden kaynaklanan gecikmelere ilişkin tazmin talebinde bulunmayacağını peşinen kabul, beyan ve taahhüt eder. Vale, FunBreak Vale ile paylaşmış olduğu ödeme bilgilerinin doğruluğunu, aksi durumda hak talep edemeyeceğini kabul, beyan ve taahhüt eder.
+
+12.5. Vale, FunBreak Vale'nin aracı platform hizmeti verdiğini, kendisinden, Yolcu'dan veya üçüncü bir kişiden kaynaklanabilecek zararlarda ve benzeri eylemlerde hukuki ve cezai sorumluluğunun FunBreak Vale'de olmadığını kabul, beyan ve taahhüt eder.
+
+12.6. Vale, FunBreak Vale'de yolcular tarafından kendisi hakkında gizli ya da açık şekilde verilen puanlarla FunBreak Vale'nin herhangi bir kontrolü olmadığı ve diğer üyeler tarafından verilen olumsuz puanlar ya da görüşler yüzünden oluşabilecek durumlarında FunBreak Vale'yi sorumlu tutmayacağını beyan, kabul ve taahhüt eder.
+
+12.7. FunBreak Vale, yararlı olacağını düşündüğü haber, ilan, makale ve benzeri hususlara web sayfasında veya mobil uygulamalarında yer verebilir. FunBreak Vale, bunlarda yer alan bilgi ve yorumların doğruluğunun veya uygunluğunun, isabetli olmasını garanti etmez.
+
+13. TELİF HAKLARI
+
+13.1. Vale, FunBreak Vale'ye yüklemiş olduğu içeriklere ilişkin telif ve her nevi haklarının korunmasına dair tüm yetkileri ve takip ile teşhir haklarını FunBreak Vale'ye vermiştir. İşbu Sözleşme, Vale'nin oluşturduğu tüm içeriklerin FunBreak Vale'nin kullanımında olduğunu ve Vale'nin yazılı olarak geri çekilmemesi ile izin/muvafakat ve vekalet verdiğini kabul etmektedir.
+
+13.2. FunBreak Vale'nin web sayfasında veya mobil uygulamasında yer alan veya FunBreak Vale tarafından paylaşılan bilgiler hiçbir şekilde çoğaltılamaz, yayınlanamaz, kopyalanamaz, sunulamaz ve/veya aktarılamaz, bütünü veya bir kısmı diğer web sayfalarında veya mobil uygulamalarda izinsiz olarak kullanılamaz. FunBreak Vale'de paylaşılan içerikler hiçbir şekilde gerek internet, gerek sosyal medya gerekse diğer yollarla FunBreak Vale'nin izni olmaksızın kullanılamaz. Kullanılması halinde FunBreak Vale'nin hukuki yollara başvuru hakları ve fikri haklarda kabul edilen 3 kata kadar maddi tazminatı isteme hakkı saklıdır.
+
+13.3. Vale kendisine ait olmayan veya kendisine ait olmayıp da kaynak belirtmediği bir içeriği veya eseri FunBreak Vale'ye yüklemesi halinde doğabilecek bütün zararlardan kendisinin sorumlu olduğunu kabul, beyan ve taahhüt eder.
+
+13.4. Vale, FunBreak Vale tarafından verilen hizmetlerin ve sağlanan içeriklerin kopyalanmamasını, hiçbir şekilde çoğaltılmaması, mobil uygulamasının veya üçüncü tarafa kullanımına ilişkin tescil hakkı, telif hakkı vb. haklarının çiğnenmemesi ilkelerini kabul etmiştir.
+
+14. SÖZLEŞMENİN BÜTÜNLÜĞÜ, UYGULANABİLİRLİK VE DEĞİŞİKLİKLER
+
+14.1. İşbu Sözleşme şartlarından biri, kısmen veya tamamen geçersiz hale gelirse, sözleşmenin geri kalan maddeleri geçerliliğini korumaya devam edecektir.
+
+14.2. FunBreak Vale çeşitli zamanlarda mobil uygulamasında ve web sayfasında sunulan hizmetleri ve işbu sözleşme şartlarını kısmen veya tamamen değiştirebilir. Değişiklikler web sayfasında ve mobil uygulamada yayınlandığı tarihten itibaren geçerli olacaktır. Değişiklikleri takip etmek Vale'nin sorumluluğundadır.
+
+14.3. İşbu Sözleşme'nin tarafı olan Vale, Sözleşme'nin güncel halini her zaman FunBreak Vale'de bulabilir ve meydana getirilen güncellemeleri okuyabilir. FunBreak Vale gerekli görür ise Vale'nin onayına sunarak, FunBreak Vale tarafından sunulacak hizmetlerden yararlanılabilmesi için Vale'nin sözleşme şartlarındaki değişiklikler ile ilgili butonu tıklamak suretiyle okumasını ve onaylaması istenecektir. Vale, Sözleşme koşullarında yapılan değişiklikleri takip etmek zorundadır ve değişiklikleri bilmediğini ileri sürerek taraflar arasındaki Sözleşme iradesinin son bulduğunu, Sözleşme'nin yürürlükten kalktığını ileri süremez.
+
+15. TEBLİGAT
+
+15.1. İşbu Sözleşme ile ilgili taraflara gönderilecek olan tüm bildirimler, FunBreak Vale'nin bilinen e-posta adresi (info@funbreakvale.com) ve Vale'nin üyelik formlarında belirttiği e-posta adresi vasıtasıyla yapılacaktır.
+
+15.2. Vale, adresi değişirse bunu 5 (beş) gün içinde yazılı olarak diğer tarafa bildireceği, aksi halde bu adrese yapılacak tebligatın geçerli sayılacağını kabul eder.
+
+15.3. E-posta yoluyla yapılan tebligatlar, gönderim tarihinden itibaren 1 (bir) gün sonra tebliğ edilmiş sayılır.
+
+16. DELİL SÖZLEŞMESİ
+
+16.1. Vale ile FunBreak Vale arasında işbu sözleşme ve işlemlerinde çıkabilecek her türlü uyuşmazlıklarda FunBreak Vale'nin defter, kayıt ve belgeleri, mobil uygulama veya web sayfası içindeki mesajlaşma, SMS, e-posta ve bilgisayar çıktıları, veritabanı kayıtları, sistem logları yemin ve beyanlarıyla 6100 sayılı Hukuk Mahkemeleri Kanunu gereği delil olarak kabul edilecek olup, Vale bu kayıtlara itiraz edemeyeceğini kabul eder.
+
+16.2. GPS konum kayıtları, rota takip verileri (route tracking), bekleme noktası kayıtları (waiting points), bırakma konum kayıtları (dropoff location) ve sistem timestamp'leri FunBreak Vale'nin sunucu kayıtlarında saklanır ve delil niteliğindedir.
+
+17. YETKİLİ MAHKEME VE İCRA DAİRELERİ
+
+17.1. İşbu sözleşme hükümlerinden doğabilecek her türlü uyuşmazlıkların çözümünde İstanbul (Çağlayan) Mahkemeleri ile İcra Müdürlükleri yetkili olacaktır.
+
+17.2. Taraflar, yukarıda belirtilen mahkemelerin yetkisini kabul ettiklerini ve başka bir yargı merciine başvurmayacaklarını beyan ederler.
+
+18. SÖZLEŞME EKLERİNİN KABULÜ
+
+18.1. Vale, işbu sözleşmeyi onaylamakla birlikte sözleşmenin eklerini de kabul etmeyi beyan eder. Sözleşmenin genel ekleri:
+1. Kişisel Verilerin Korunmasına Dair Aydınlatma Metni
+2. Özel Nitelikli Kişisel Verilerin İşlenmesine Dair Açık Rıza Beyanı
+3. Açık Rıza Beyanı
+4. Verilerin Gizliliğine Dair Gizlilik Taahhütleri
+5. Sorumluluk Beyanı
+6. FunBreak Vale tarafından hazırlanan rehberler, kurallar ve şartlar
+
+18.2. Bu ekler zamanla FunBreak Vale tarafından arttırılabilir, değiştirilebilir. Vale, sözleşme değişikliklerini, eklerin düzenlemelerini takip etmekle yükümlü olduğu gibi düzenlemelere ilişkin yükümlülükleri de yerine getirmeyi kabul, beyan ve taahhüt eder.
+
+19. YÜRÜRLÜK
+
+19.1. Vale, işbu Sözleşme'de yer alan maddeleri daha sonra hiçbir itiraza mahal vermeyecek şekilde okuduğunu, anladığını, sözleşme koşullarına uygun davranacağını ve Sözleşme'yi FunBreak Vale'nin sistemine kayıt olurken kullanıcı adı ve şifresini oluşturduktan sonra veya kayıt sırasında sözleşmenin onayına dair kutuyu işaretlemesiyle ve işbu metni okuduğunu ve anladığını kabul beyan ve taahhüt eder.
+
+19.2. İşbu Sözleşme, Vale'nin mobil uygulama veya web platformu üzerinden elektronik onay vermesi veya fiziki olarak imzalaması ile yürürlüğe girer.
+
+19.3. Sözleşme, Türkiye Cumhuriyeti yasalarına tabidir ve bu yasalara göre yorumlanacaktır.
+
+FUNBREAK GLOBAL TEKNOLOJI LIMITED SIRKETI
+Mersis No: 0388195898700001
+Ticaret Sicil No: 1105910
+Adres: Armağanevler Mah. Ortanca Sk. No: 69 İç Kapı No: 22 Ümraniye/İstanbul
+Telefon: 0533 448 82 53
+E-posta: info@funbreakvale.com
+Web: www.funbreakvale.com
+
+Versiyon: 2.0''';
+  }
+
+  String _getKVKKText() {
+    return '''FUNBREAK VALE
+VALELER İÇİN KİŞİSEL VERİLERİN İŞLENMESİ VE KORUNMASINA YÖNELİK AYDINLATMA METNİ
+
+VERİ SORUMLUSU BİLGİLERİ
+Ticaret Ünvanı: FUNBREAK GLOBAL TEKNOLOJİ LİMİTED ŞİRKETİ
+Mersis No: 0388195898700001
+Adres: Armağanevler Mah. Ortanca Sk. No: 69 İç Kapı No: 22 Ümraniye/İstanbul
+E-posta: info@funbreakvale.com
+
+GİRİŞ
+6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") kapsamında kişisel verilerinizin işlenmesine ilişkin aydınlatma yükümlülüğümüzü yerine getirmekteyiz.
+
+İŞLENEN KİŞİSEL VERİ KATEGORİLERİ
+1. Kimlik Bilgileri: Ad, soyad, T.C. kimlik no, doğum tarihi
+2. İletişim Bilgileri: Telefon, e-posta, adres
+3. Finansal Bilgiler: IBAN, ödeme bilgileri
+4. Müşteri İşlem Bilgileri: Yolculuk kayıtları, puanlar
+5. Araç Bilgileri: Ehliyet bilgileri
+6. Performans Verileri: Tamamlanan yolculuk sayısı, müşteri değerlendirmeleri
+7. Sağlık Verileri (ÖZEL): Sağlık raporu
+8. Adli Sicil Verileri (ÖZEL): Adli sicil kaydı
+9. Lokasyon Verileri: GPS konum bilgileri, rota verileri
+10. Cihaz/Teknik Veriler: IP adresi, cihaz bilgileri
+
+İŞLEME AMAÇLARI
+- Vale kaydı ve profil oluşturma
+- Yolculuk eşleştirme
+- Ödeme işlemleri
+- Güvenlik ve doğrulama
+- Yasal yükümlülükler
+- Hizmet kalitesi
+
+VERİ AKTARIMI
+Kişisel verileriniz; yasal yükümlülükler, yolcu ile eşleştirme ve ödeme işlemleri kapsamında ilgili kişi ve kurumlara aktarılabilir.
+
+HAKLARINIZ (KVKK md. 11)
+- Verilerinize erişim
+- Düzeltme ve silme talep etme
+- İşleme itiraz etme
+- Veri taşınabilirliği
+
+İletişim: info@funbreakvale.com
+
+Versiyon: 1.0 | Tarih: 28 Kasım 2025''';
+  }
+
+  String _getSpecialDataText() {
+    return '''FUNBREAK VALE
+ÖZEL NİTELİKLİ KİŞİSEL VERİLERİN İŞLENMESİNE DAİR AÇIK RIZA BEYANI
+
+6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") kapsamında "özel nitelikli kişisel veri" olarak tanımlanan aşağıdaki veri kategorilerinin işlenmesine açık rızam ile onay veriyorum:
+
+İŞLENECEK ÖZEL NİTELİKLİ VERİLER:
+
+1. SAĞLIK VERİLERİ
+- Sağlık raporu bilgileri
+- Sürücülük yapabilme durumu
+İşleme Amacı: Vale olarak güvenli sürüş yapabilme yeterliliğinin tespiti
+
+2. ADLİ SİCİL VERİLERİ
+- Sabıka kaydı durumu
+- Ceza geçmişi bilgileri
+İşleme Amacı: Yolcu güvenliğinin sağlanması
+
+3. FİZİKSEL KONUM VERİLERİ
+- GPS konum bilgileri
+- Rota takip verileri
+- Bekleme noktası kayıtları
+- Bırakma konum bilgileri
+İşleme Amacı: Yolculuk takibi, güvenlik ve hizmet kalitesi
+
+SAKLAMA SÜRESİ
+Özel nitelikli kişisel veriler, yasal saklama süreleri ve hizmet gereklilikleri çerçevesinde muhafaza edilecek olup, bu sürelerin sona ermesi veya işleme amacının ortadan kalkması halinde silinecek, yok edilecek veya anonim hale getirilecektir.
+
+İşbu beyanı okuyarak, belirtilen özel nitelikli kişisel verilerimin işlenmesine AÇIK RIZAMLA onay veriyorum.
+
+Versiyon: 1.0 | Tarih: 28 Kasım 2025''';
+  }
+
+  String _getOpenConsentText() {
+    return '''===============================================================================
+
+FUNBREAK VALE
+
+AÇIK RIZA BEYANI
+
+===============================================================================
+
+
+
+VERİ SORUMLUSU BİLGİLERİ
+
+
+
+Ticaret Ünvanı    : FUNBREAK GLOBAL TEKNOLOJİ LİMİTED ŞİRKETİ
+
+Mersis No         : 0388195898700001
+
+Ticaret Sicil No  : 1105910
+
+Adres             : Armağanevler Mah. Ortanca Sk. No: 69 İç Kapı No: 22 
+
+                    Ümraniye/İstanbul
+
+Telefon           : 0533 448 82 53
+
+E-posta           : info@funbreakvale.com
+
+Web Sitesi        : www.funbreakvale.com
+
+
+
+===============================================================================
+
+
+
+AÇIK RIZA BEYANI
+
+
+
+Veri sorumlusu sıfatına haiz Armağanevler Mah. Ortanca Sk. No: 69 İç Kapı 
+
+No: 22 Ümraniye/İstanbul adresinde mukim, 0388195898700001 Mersis numaralı 
+
+FUNBREAK GLOBAL TEKNOLOJİ LİMİTED ŞİRKETİ tarafından bilgilendirildiğimi,
+
+
+
+"Kişisel Verilerin İşlenmesi ve Korunmasına Yönelik Aydınlatma Metni"ni ve 
+
+"Kişisel Verilerin İşlenmesi ve Korunması Politikası"nı okuyup anladığımı 
+
+ve özgür irademle elektronik ortamda kabul ettiğimi veya fiziki ortamda 
+
+imzaladığımı,
+
+
+
+Şerh düşmediğim tüm hususları açık bir rıza ile kabul ettiğimi kabul, beyan 
+
+ve taahhüt ederim.
+
+
+
+6698 sayılı Kişisel Verilerin Korunması Kanunu kapsamında:
+
+
+
+• Kişisel verilerimin işlenmesine,
+
+• Kişisel verilerimin saklanmasına,
+
+• Kişisel verilerimin üçüncü kişilerle paylaşılmasına,
+
+• Kişisel verilerimin yurt içinde aktarılmasına,
+
+• Kişisel verilerimin yurt dışına aktarılmasına,
+
+• Özel nitelikli kişisel verilerimin işlenmesine,
+
+
+
+işbu belgede ve ilgili aydınlatma metinlerinde belirtilen amaçlar ve hukuki 
+
+sebepler çerçevesinde açık rıza veriyorum.
+
+
+
+KVKK'nın 11. maddesi uyarınca sahip olduğum haklarımı biliyorum ve bu 
+
+haklarımı kullanabileceğimi kabul ediyorum.
+
+
+
+===============================================================================
+
+
+
+ELEKTRONİK ONAY (MOBİL UYGULAMA İÇİN)
+
+
+
+☐ Yukarıdaki beyanı okudum, anladım ve kabul ediyorum.
+
+
+
+☐ Kişisel Verilerin İşlenmesi ve Korunmasına Yönelik Aydınlatma Metni'ni 
+
+  okudum ve anladım.
+
+
+
+☐ Özel Nitelikli Kişisel Verilerin İşlenmesine Dair Açık Rıza Beyanı'nı 
+
+  okudum ve kabul ediyorum.
+
+
+
+☐ Kişisel verilerimin yurt dışına aktarılmasına izin veriyorum.
+
+
+
+===============================================================================
+
+
+
+İLETİŞİM VE BAŞVURU
+
+
+
+Kişisel verilerinizle ilgili talepleriniz için:
+
+
+
+Adres:
+
+FUNBREAK GLOBAL TEKNOLOJİ LİMİTED ŞİRKETİ
+
+Armağanevler Mah. Ortanca Sk. No: 69 İç Kapı No: 22
+
+Ümraniye/İstanbul
+
+
+
+Telefon: 0533 448 82 53
+
+E-posta: info@funbreakvale.com
+
+Web: www.funbreakvale.com/kvkk-basvuru
+
+
+
+Çalışma Saatleri: Pazartesi-Cuma 09:00-18:00
+
+
+
+===============================================================================
+
+
+
+EK BİLGİLENDİRME
+
+
+
+KVKK'NIN 11. MADDESİ UYARINCA HAKLARINIZ:
+
+
+
+a) Kişisel verilerinizin işlenip işlenmediğini öğrenme,
+
+
+
+b) Kişisel verileriniz işlenmişse buna ilişkin bilgi talep etme,
+
+
+
+c) Kişisel verilerinizin işlenme amacını ve bunların amacına uygun kullanılıp 
+
+   kullanılmadığını öğrenme,
+
+
+
+d) Yurt içinde veya yurt dışında kişisel verilerinizin aktarıldığı üçüncü 
+
+   kişileri bilme,
+
+
+
+e) Kişisel verilerinizin eksik veya yanlış işlenmiş olması hâlinde bunların 
+
+   düzeltilmesini isteme,
+
+
+
+f) KVKK'nın 7. maddesinde öngörülen şartlar çerçevesinde kişisel 
+
+   verilerinizin silinmesini veya yok edilmesini isteme,
+
+
+
+g) (d) ve (e) bentleri uyarınca yapılan işlemlerin, kişisel verilerin 
+
+   aktarıldığı üçüncü kişilere bildirilmesini isteme,
+
+
+
+h) İşlenen verilerin münhasıran otomatik sistemler vasıtasıyla analiz 
+
+   edilmesi suretiyle kişinin kendisi aleyhine bir sonucun ortaya çıkmasına 
+
+   itiraz etme,
+
+
+
+ı) Kişisel verilerinizin kanuna aykırı olarak işlenmesi sebebiyle zarara 
+
+   uğramanız hâlinde zararın giderilmesini talep etme.
+
+
+
+===============================================================================
+
+
+
+RIZA GERİ ALMA
+
+
+
+Vermiş olduğunuz rızayı geri almak isterseniz:
+
+
+
+1. Yazılı Başvuru:
+
+   Yukarıdaki adrese kimlik belgesi ile başvurabilirsiniz.
+
+
+
+2. E-posta:
+
+   info@funbreakvale.com adresine güvenli elektronik imza ile 
+
+   gönderebilirsiniz.
+
+
+
+3. Mobil Uygulama:
+
+   Ayarlar > KVKK > Rıza Yönetimi menüsünden işlem yapabilirsiniz.
+
+
+
+4. Web Sitesi:
+
+   www.funbreakvale.com/kvkk-basvuru formunu doldurabilirsiniz.
+
+
+
+Rıza geri alma talebi, tarafımıza ulaştığı tarihten itibaren en geç 30 (otuz) 
+
+gün içinde değerlendirilir ve sonuçlandırılır.
+
+
+
+===============================================================================
+
+
+
+GÜVENLİK VE GİZLİLİK
+
+
+
+FunBreak Vale, kişisel verilerinizin güvenliğini sağlamak için:
+
+
+
+• SSL/TLS şifreleme kullanır
+
+• Güvenlik duvarları ile korur
+
+• Düzenli güvenlik güncellemeleri yapar
+
+• Yetkilendirme ve erişim kontrolü uygular
+
+• Veri yedekleme sistemleri kurar
+
+• Personel eğitimleri verir
+
+• Gizlilik sözleşmeleri imzalar
+
+
+
+===============================================================================
+
+
+
+YASAL DAYANAK
+
+
+
+İşbu Açık Rıza Beyanı, aşağıdaki mevzuat çerçevesinde hazırlanmıştır:
+
+
+
+• 6698 sayılı Kişisel Verilerin Korunması Kanunu
+
+• Kişisel Verilerin Silinmesi, Yok Edilmesi veya Anonim Hale Getirilmesi 
+
+  Hakkında Yönetmelik
+
+• Aydınlatma Yükümlülüğünün Yerine Getirilmesinde Uyulacak Usul ve Esaslar 
+
+  Hakkında Tebliğ
+
+• Kişisel Verileri Koruma Kurulu Kararları
+
+• İlgili sair mevzuat
+
+
+
+===============================================================================
+
+
+
+FUNBREAK GLOBAL TEKNOLOJİ LİMİTED ŞİRKETİ
+
+
+
+Mersis: 0388195898700001
+
+Ticaret Sicil: 1105910
+
+Armağanevler Mah. Ortanca Sk. No: 69 İç Kapı No: 22 Ümraniye/İstanbul
+
+Tel: 0533 448 82 53
+
+E-posta: info@funbreakvale.com
+
+Web: www.funbreakvale.com
+
+
+
+===============================================================================
+
+Versiyon: 2.0''';
+  }
+}
+

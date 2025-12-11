@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:convert'; // JSON PARSE İÇİN!
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -75,25 +74,23 @@ Future<void> _driverFirebaseBackgroundHandler(RemoteMessage message) async {
   _ensureBackgroundSharedPrefsRegistered();
 
   try {
-    // Firebase'i başlat - duplicate safe (iOS'te AppDelegate tarafından yapıldı)
-    if (Platform.isAndroid) {
-      try {
-        if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(
-            options: DefaultFirebaseOptions.currentPlatform,
-          );
-          print('🔥 Firebase background handler için başlatıldı (Android)');
-        } else {
-          print('🔥 Firebase zaten başlatılmış - background handler ready!');
-        }
-      } catch (e) {
-        // Duplicate app hatası normalize - çalışmaya devam et
-      if (e.toString().contains('duplicate-app')) {
-        print('🔥 Firebase already initialized - background handler working!');
+    // ✅ Firebase'i başlat - HEM ANDROID HEM iOS!
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+        print('🔥 Firebase başlatıldı: ${Platform.isIOS ? "iOS" : "Android"}');
       } else {
-        print('❌ Firebase background init error: $e');
+        print('🔥 Firebase zaten başlatılmış - OK!');
       }
-    }
+    } catch (e) {
+      // Duplicate app hatası normalize - çalışmaya devam et
+      if (e.toString().contains('duplicate-app')) {
+        print('🔥 Firebase already initialized - OK!');
+      } else {
+        print('❌ Firebase init error: $e');
+      }
     }
     
     print('🔔🔔🔔 BACKGROUND HANDLER TRIGGERED! 🔔🔔🔔');
@@ -115,36 +112,36 @@ Future<void> _driverFirebaseBackgroundHandler(RemoteMessage message) async {
       // State güncelleme ve persistence işlemleri yapılabilir
     } else {
       // 🔥 ANDROID İÇİN DATA-ONLY notification oluştur!
-      RemoteMessage finalMessage = message;
-      if (message.notification == null && message.data.isNotEmpty) {
-        print('   🔥 DATA-ONLY mesaj - notification oluşturuluyor...');
-        final title = message.data['title'] ?? 'FunBreak Vale Şoför';
-        final body = message.data['body'] ?? 'Yeni bildirim';
-        
-        finalMessage = RemoteMessage(
-          senderId: message.senderId,
-          category: message.category,
-          collapseKey: message.collapseKey,
-          contentAvailable: message.contentAvailable,
-          data: message.data,
-          from: message.from,
-          messageId: message.messageId,
-          messageType: message.messageType,
-          mutableContent: message.mutableContent,
-          notification: RemoteNotification(title: title, body: body),
-          sentTime: message.sentTime,
-          threadId: message.threadId,
-          ttl: message.ttl,
-        );
-        print('   ✅ Notification eklendi: $title');
-      }
+    RemoteMessage finalMessage = message;
+    if (message.notification == null && message.data.isNotEmpty) {
+      print('   🔥 DATA-ONLY mesaj - notification oluşturuluyor...');
+      final title = message.data['title'] ?? 'FunBreak Vale Şoför';
+      final body = message.data['body'] ?? 'Yeni bildirim';
       
+      finalMessage = RemoteMessage(
+        senderId: message.senderId,
+        category: message.category,
+        collapseKey: message.collapseKey,
+        contentAvailable: message.contentAvailable,
+        data: message.data,
+        from: message.from,
+        messageId: message.messageId,
+        messageType: message.messageType,
+        mutableContent: message.mutableContent,
+        notification: RemoteNotification(title: title, body: body),
+        sentTime: message.sentTime,
+        threadId: message.threadId,
+        ttl: message.ttl,
+      );
+      print('   ✅ Notification eklendi: $title');
+    }
+    
       // 🔥 ANDROID AdvancedNotificationService kullan!
-      try {
-        await AdvancedNotificationService.showBackgroundNotification(finalMessage);
-        print('✅ AdvancedNotificationService background bildirim gösterildi!');
-      } catch (e) {
-        print('⚠️ Background notification hatası: $e');
+    try {
+      await AdvancedNotificationService.showBackgroundNotification(finalMessage);
+      print('✅ AdvancedNotificationService background bildirim gösterildi!');
+    } catch (e) {
+      print('⚠️ Background notification hatası: $e');
       }
     }
     
@@ -191,19 +188,22 @@ void main() async {
   FirebaseMessaging.onBackgroundMessage(_driverFirebaseBackgroundHandler);
   print('BACKGROUND HANDLER MAIN DE KAYDEDILDI!');
   
-  // ⚠️ iOS'te Firebase.configure() AppDelegate tarafından yapılıyor!
-  if (Platform.isAndroid) {
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      print('✅ Firebase başlatıldı (Android - ŞOFÖR)');
-    } catch (e) {
-      print('⚠️ Firebase init hatası: $e');
+  // ⚠️ Firebase initialization - Flutter plugin tüm platformlarda!
+  try {
+    if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+      print('✅ ŞOFÖR Firebase başlatıldı (${Platform.isAndroid ? "Android" : "iOS"})');
+    } else {
+      print('⚠️ ŞOFÖR Firebase zaten başlatılmış');
     }
-  } else {
-    print('📱 iOS ŞOFÖR: Firebase.configure() AppDelegate tarafından yapıldı');
+  } catch (e) {
+    print('⚠️ ŞOFÖR Firebase init hatası (duplicate normal): $e');
   }
+  
+  // ✅ TOKEN ALMA AdvancedNotificationService TARAFINDAN YAPILACAK - RATE LIMIT ÖNLEMİ!
+  print('✅ Firebase başlatıldı - Token alma AdvancedNotificationService tarafından yapılacak');
   
   // GELİŞMİŞ SÜRÜCÜ BİLDİRİM SERVİSİ BAŞLAT!
   print('🔥 [ŞOFÖR] AdvancedNotificationService başlatılıyor...');
@@ -217,13 +217,15 @@ void main() async {
   
   await requestPermissions();
   
+  // ✅ FCM TOKEN AdvancedNotificationService TARAFINDAN ALINACAK - RATE LIMIT ÖNLEMİ!
+  print('🔔 MAIN: FCM Token sistemi AdvancedNotificationService tarafından yönetiliyor');
+  
   // Session servisini başlat
   await SessionService.initializeSession();
   
   // 🚗 ARKA PLAN KONUM SERVİSİ BAŞLAT (UYGULAMA KAPALIYKEN DE KM HESABI!)
   try {
     await BackgroundLocationService.initialize();
-    // Aktif yolculuk varsa servisi yeniden başlat
     await BackgroundLocationService.resumeIfActiveRide();
     print('✅ [ŞOFÖR] Background location service hazır');
   } catch (e) {
@@ -236,20 +238,27 @@ void main() async {
 // Basit ve hızlı izin sistemi
 Future<void> requestPermissions() async {
   try {
-    // SÜRÜCÜ İÇİN KRİTİK BILDIRIM İZINLERI!
+    // SÜRÜCÜ İÇİN KRİTİK BILDIRIM İZINLERI (Platform-aware!)
+    if (Platform.isAndroid) {
     final notificationStatus = await Permission.notification.request();
-    print('📱 SÜRÜCÜ Bildirim izni: $notificationStatus');
+      print('📱 Android SÜRÜCÜ Bildirim izni: $notificationStatus');
     
     if (notificationStatus.isDenied) {
       print('❌ SÜRÜCÜ: Bildirim izni reddedildi - background bildirimler çalışmayacak!');
     } else {
       print('✅ SÜRÜCÜ: Bildirim izni verildi - background bildirimler çalışacak!');
     }
+    } else if (Platform.isIOS) {
+      // ✅ iOS'ta Firebase permission AdvancedNotificationService tarafından isteniyor!
+      // "Too many server requests" hatasını önlemek için burada requestPermission() ÇAĞIRMIYORUZ!
+      print('📱 iOS SÜRÜCÜ: Bildirim izni AdvancedNotificationService tarafından istenecek');
+    }
     
-    // PİL OPTİMİZASYONU BYPASS - BACKGROUND NOTIFICATION İÇİN KRİTİK!
+    // PİL OPTİMİZASYONU BYPASS - SADECE ANDROID!
+    if (Platform.isAndroid) {
     try {
       final batteryOptimization = await Permission.ignoreBatteryOptimizations.request();
-      print('🔋 SÜRÜCÜ Pil optimizasyonu bypass: $batteryOptimization');
+        print('🔋 Android SÜRÜCÜ Pil optimizasyonu bypass: $batteryOptimization');
       
       if (batteryOptimization.isDenied) {
         print('⚠️ SÜRÜCÜ: Pil optimizasyonu bypass edilmedi - background bildirimler kısıtlanabilir!');
@@ -258,6 +267,9 @@ Future<void> requestPermissions() async {
       }
     } catch (e) {
       print('❌ Pil optimizasyonu kontrol hatası: $e');
+      }
+    } else if (Platform.isIOS) {
+      print('📱 iOS: Arka planda yenileme Info.plist UIBackgroundModes var (programatik kontrol gerekmez)');
     }
     
     // Konum izni
@@ -767,73 +779,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
           }
         });
         
-        // NOTIFICATION PERMISSION KONTROL - SÜRÜCÜ İÇİN ZORUNLU!
-        final permission = await messaging.requestPermission(
-          alert: true,
-          announcement: true,
-          badge: true,
-          carPlay: false,
-          criticalAlert: true,
-          provisional: false,
-          sound: true,
-        );
-        
-        print('📱 === SÜRÜCÜ NOTIFICATION PERMISSION ===');
-        print('   🔔 Authorization Status: ${permission.authorizationStatus}');
-        print('   📢 Alert: ${permission.alert}');
-        print('   🔊 Sound: ${permission.sound}');
-        print('   🏷️ Badge: ${permission.badge}');
-        
-        if (permission.authorizationStatus == AuthorizationStatus.denied) {
-          print('❌ SÜRÜCÜ: Notification permission DENIED!');
-        } else {
-          print('✅ SÜRÜCÜ: Notification permission GRANTED!');
-        }
-        
-        // FCM token al ve kaydet - TELEFON İÇİN DEBUG!
-        messaging.getToken().then((token) async {
-          print('📱 === SÜRÜCÜ FCM TOKEN KONTROL ===');
-          print('📱 FCM Token (ŞOFÖR): $token');
-          
-          // TOKEN KONTROL BİLGİSİ - TELEFONDA GÖREBİLİRSİNİZ!
-          if (token != null && token.isNotEmpty) {
-            print('🎉 ŞOFÖR: FCM Token BAŞARILI!');
-            print('🔔 ŞOFÖR: Firebase bağlantısı ÇALIŞIYOR');
-            print('📋 Token (ilk 20): ${token.substring(0, 20)}...');
-            print('🔥 ŞOFÖR TOPIC: funbreak_drivers subscription VAR');
-            print('💬 Panel duyuru gönderilince bu token\'a bildirim düşecek!');
-            
-            // FCM TOKEN'I DATABASE'E KAYDET!
-            await _saveFCMTokenToDatabase(token);
-          } else {
-            print('❌ ŞOFÖR: FCM Token alınamadı - KRITIK SORUN!');
-            print('🚨 ŞOFÖR: Firebase bağlantı sorunu - bildirimler düşmeyecek!');
-          }
-        }).catchError((e) {
-          print('❌ === SÜRÜCÜ FCM TOKEN CRİTİK HATA ===');
-          print('🐛 HATA: $e');
-          print('💡 ÇÖZÜM: Internet/Firebase permission kontrol et');
-        });
-
-        // EK GÜVENLİK: 5 SANİYE SONRA TEKRAR DENEME!
-        Future.delayed(const Duration(seconds: 5), () async {
-          try {
-            final token = await messaging.getToken();
-            if (token != null && token.isNotEmpty) {
-              print('🔄 ŞOFÖR: İkinci FCM token denemesi yapılıyor...');
-              await _saveFCMTokenToDatabase(token);
-            }
-          } catch (e) {
-            print('⚠️ ŞOFÖR: İkinci FCM token denemesi başarısız: $e');
-          }
-        });
-        
-        print('✅ ŞOFÖR Push notification handler\'ları TAMAMI kuruldu');
+        // ✅ NOTIFICATION PERMISSION + TOKEN ALMA → AdvancedNotificationService TARAFINDAN YAPILIYOR!
+        // "Too many server requests" hatasını önlemek için burada requestPermission() ÇAĞIRMIYORUZ!
+        print('✅ ŞOFÖR: Permission ve token AdvancedNotificationService tarafından yapılacak');
+        print('✅ ŞOFÖR Push notification handler\'ları kuruldu');
       } catch (e) {
         print('❌ ŞOFÖR notification setup hatası: $e');
       }
       
-      // Dinamik contact service (basit servis, initialize gerekmez)
+      // Dinamik contact service
+      await DynamicContactService.initialize();
       
       // Location tracking HER ZAMAN ÇALIŞMALI - ÇEVRİMDIŞI ŞOFÖR DE TAKİP EDİLSİN!
       await LocationTrackingService.startLocationTracking();
@@ -860,7 +815,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
         
         if (authProvider.isLoggedIn) {
-          return const MainScreen();
+          // SÖZLEŞME KONTROLÜ İÇİN PersistenceAwareDriverMainScreen KULLAN!
+          return const PersistenceAwareDriverMainScreen();
         }
         
         return const LoginScreen();
@@ -1045,10 +1001,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_permissionsChecked) return;
     
     try {
-      // Bildirim izni kontrol et
+      // Bildirim izni kontrol et (Platform-aware!)
+      if (Platform.isAndroid) {
       var notificationStatus = await Permission.notification.status;
       if (notificationStatus.isDenied) {
         await _requestPermissionWithDialog('Bildirim', Permission.notification);
+        }
+      } else if (Platform.isIOS) {
+        // iOS'ta Firebase Messaging ile kontrol
+        final fcmSettings = await FirebaseMessaging.instance.getNotificationSettings();
+        if (fcmSettings.authorizationStatus != AuthorizationStatus.authorized &&
+            fcmSettings.authorizationStatus != AuthorizationStatus.provisional) {
+          await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true);
+        }
       }
       
       // KONUM İZNİ "HER ZAMAN" ZORUNLU KONTROL!
@@ -1063,10 +1028,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       
       debugPrint('✅ Konum izni "Her Zaman" - devam edilebilir');
       
-      // Arka plan izinleri kontrol et
+      // Arka plan izinleri kontrol et (SADECE ANDROID!)
+      if (Platform.isAndroid) {
       var batteryOptimization = await Permission.ignoreBatteryOptimizations.status;
       if (batteryOptimization.isDenied) {
         await _requestPermissionWithDialog('Pil Optimizasyonu', Permission.ignoreBatteryOptimizations);
+        }
       }
       
       _permissionsChecked = true;
@@ -1835,18 +1802,28 @@ String _formatScheduledTimeForDriver(String? scheduledTime) {
 // FCM TOKEN'I DATABASE'E KAYDET!
 Future<void> _saveFCMTokenToDatabase(String fcmToken) async {
   try {
-    print('💾 FCM Token database\'e kaydediliyor...');
+    print('💾 💾 💾 MAIN.DART: FCM Token database\'e kaydediliyor...');
 
     final prefs = await SharedPreferences.getInstance();
-    final driverId = prefs.getString('admin_user_id');
+    
+    // ✅ TÜMKEY'LERİ KONTROL ET!
+    print('🔍 MAIN.DART FCM: admin_user_id = ${prefs.getString('admin_user_id')}');
+    print('🔍 MAIN.DART FCM: driver_id = ${prefs.getString('driver_id')}');
+    print('🔍 MAIN.DART FCM: user_id = ${prefs.getString('user_id')}');
+    
+    final driverId = prefs.getString('admin_user_id') ?? 
+                     prefs.getString('driver_id') ?? 
+                     prefs.getString('user_id');
 
-    if (driverId == null) {
-      print('❌ Driver ID bulunamadı - FCM token kaydedilemedi');
+    if (driverId == null || driverId.isEmpty) {
+      print('❌ MAIN.DART: Driver ID HİÇBİR KEY-DE BULUNAMADI - FCM token kaydedilemedi');
+      print('   🔍 Tüm keys: ${prefs.getKeys()}');
       return;
     }
 
-    print('🔍 FCM Token Kaydetme - Driver ID: $driverId');
-    print('📱 Token: ${fcmToken.substring(0, 20)}...');
+    print('✅ MAIN.DART: Driver ID BULUNDU: $driverId');
+    print('🔍 MAIN.DART: FCM Token Kaydetme - Driver ID: $driverId');
+    print('📱 MAIN.DART: Token: ${fcmToken.substring(0, 20)}...');
 
     final response = await http.post(
       Uri.parse('https://admin.funbreakvale.com/api/update_fcm_token.php'),
@@ -1900,22 +1877,35 @@ Future<void> _checkPermissionsInBackground() async {
       print('📍 [ŞOFÖR] Konum izni istendi');
     }
     
-    // Bildirim izni
+    // Bildirim izni (Platform-aware!)
+    if (Platform.isAndroid) {
     final notificationStatus = await Permission.notification.status;
     if (notificationStatus.isDenied) {
       await Permission.notification.request();
-      print('🔔 [ŞOFÖR] Bildirim izni istendi');
+        print('🔔 [ŞOFÖR Android] Bildirim izni istendi');
+    }
+    } else if (Platform.isIOS) {
+      // iOS'ta Firebase Messaging ile kontrol
+      final fcmSettings = await FirebaseMessaging.instance.getNotificationSettings();
+      if (fcmSettings.authorizationStatus != AuthorizationStatus.authorized) {
+        await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true);
+        print('🔔 [ŞOFÖR iOS] Bildirim izni istendi');
+      }
     }
     
-    // Pil optimizasyonu bypass
+    // Pil optimizasyonu bypass (SADECE ANDROID!)
+    if (Platform.isAndroid) {
     try {
       final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
       if (batteryStatus.isDenied) {
         await Permission.ignoreBatteryOptimizations.request();
-        print('🔋 [ŞOFÖR] Pil optimizasyonu bypass istendi');
+          print('🔋 [ŞOFÖR Android] Pil optimizasyonu bypass istendi');
       }
     } catch (e) {
-      print('⚠️ [ŞOFÖR] Pil izni hatası (normal): $e');
+        print('⚠️ [ŞOFÖR Android] Pil izni hatası (normal): $e');
+      }
+    } else if (Platform.isIOS) {
+      print('📱 [ŞOFÖR iOS] Arka planda yenileme Info.plist\'te var');
     }
     
     print('✅ [ŞOFÖR] Arka plan izin kontrolü tamamlandı');
